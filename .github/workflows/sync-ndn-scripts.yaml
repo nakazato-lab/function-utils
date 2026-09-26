@@ -1,0 +1,52 @@
+name: Sync NDN scripts to manifests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ndn-scripts/func/**'
+      - 'ndn-scripts/use-func/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-ndn-scripts
+  cancel-in-progress: false
+
+jobs:
+  update-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: function-utils
+      - uses: actions/checkout@v4
+        with:
+          repository: nakazato-lab/k8s-manifest
+          token: ${{ secrets.K8S_MANIFEST_TOKEN }}
+          path: k8s-manifest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install manifest generator dependencies
+        run: python -m pip install -r function-utils/.github/scripts/requirements.txt
+      - name: Generate ConfigMaps and Jobs
+        run: >-
+          python function-utils/.github/scripts/render_manifests.py
+          --scripts function-utils/ndn-scripts
+          --manifest-dir k8s-manifest/yaml
+      - name: Commit manifest changes
+        working-directory: k8s-manifest
+        run: |
+          set -euo pipefail
+          git add yaml/function-register.yaml yaml/function-invoke.yaml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Update NDN script Jobs and ConfigMaps'
+          git pull --rebase
+          git push

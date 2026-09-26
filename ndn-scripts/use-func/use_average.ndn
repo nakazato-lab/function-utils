@@ -1,0 +1,2 @@
+let result = average(10, 20)
+print result
