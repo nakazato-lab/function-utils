@@ -20,7 +20,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 async def main():
     function_path = Path(os.environ['FUNCTION_PATH'])
     function_name = function_path.stem
-    source = function_path.read_text(encoding='utf-8')
+    operation = os.getenv('FUNCTION_OPERATION', 'CREATE')
+    if operation not in ('CREATE', 'DELETE'):
+        raise ValueError('FUNCTION_OPERATION must be CREATE or DELETE')
+    source = function_path.read_text(encoding='utf-8') if operation == 'CREATE' else ''
     host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
     app = NDNApp(face=TcpFace(host, port), keychain=KeychainDigest())
     params = json.dumps({
@@ -28,7 +31,9 @@ async def main():
         'content': source,
         'content_type': 'ndn',
     }).encode('utf-8')
-    register_name = os.getenv('MANAGER_REGISTER_NAME', '/Manager/register')
+    register_name = (os.getenv('MANAGER_DELETE_NAME', '/Manager/delete')
+                     if operation == 'DELETE' else
+                     os.getenv('MANAGER_REGISTER_NAME', '/Manager/register'))
 
     async def register():
         try:
@@ -36,10 +41,12 @@ async def main():
                          register_name, function_name, function_path)
             _, _, content = await app.express_interest(
                 Name.from_str(register_name), app_param=params,
-                must_be_fresh=True, can_be_prefix=False, lifetime=6000)
+                must_be_fresh=True, can_be_prefix=False, lifetime=120000)
             response = bytes(content or b'').decode('utf-8')
             logging.info('Manager response: %s', response)
             print(response, flush=True)
+            if not response.startswith('Success:'):
+                raise RuntimeError(f'Manager rejected {operation}: {response}')
         except InterestNack as exc:
             raise RuntimeError(f'Manager NACK: {exc.reason}') from exc
         except InterestTimeout as exc:

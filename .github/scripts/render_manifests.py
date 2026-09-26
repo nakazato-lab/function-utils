@@ -66,6 +66,33 @@ def render(scripts, mode):
     return items
 
 
+def deletion_jobs(previous, current):
+    """Keep DELETE Jobs until re-registration so Argo self-heal does not repeat them."""
+    current_names = {key for item in current if item.get('kind') == 'ConfigMap'
+                     for key in item.get('data', {})}
+    result = []
+    for job in previous:
+        if not job or job.get('kind') != 'Job':
+            continue
+        spec = job['spec']['template']['spec']
+        container = spec['containers'][0]
+        env = {item['name']: item['value'] for item in container['env']}
+        filename = Path(env['FUNCTION_PATH']).name
+        if filename in current_names:
+            continue
+        # The .ndn file associated with this Job is already confirmed to be absent from current.
+        if env.get('FUNCTION_OPERATION') != 'DELETE':
+            old_name = job['metadata']['name']
+            job['metadata']['name'] = old_name.replace('function-register-', 'function-delete-', 1)
+            container['env'].append({'name': 'FUNCTION_OPERATION', 'value': 'DELETE'})
+            job['spec']['activeDeadlineSeconds'] = 300
+            # DELETE needs only the filename, not the old source ConfigMap.
+            container['volumeMounts'] = [v for v in container['volumeMounts'] if v['name'] != 'script']
+            spec['volumes'] = [v for v in spec['volumes'] if v['name'] != 'script']
+        result.append(job)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scripts', type=Path, required=True)
@@ -73,6 +100,10 @@ def main():
     args = parser.parse_args()
     # Render both before writing so validation failures do not leave partial output.
     rendered = {mode: render(args.scripts, mode) for mode in ('register', 'invoke')}
+    previous_path = args.manifest_dir / 'function-register.yaml'
+    if previous_path.exists():
+        previous = list(yaml.safe_load_all(previous_path.read_text(encoding='utf-8')))
+        rendered['register'].extend(deletion_jobs(previous, rendered['register']))
     for mode, items in rendered.items():
         # An empty List lets Kustomize handle an empty directory.
         documents = items or [{'apiVersion': 'v1', 'kind': 'List', 'items': []}]
