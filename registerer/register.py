@@ -23,14 +23,10 @@ async def main():
     operation = os.getenv('FUNCTION_OPERATION', 'CREATE')
     if operation not in ('CREATE', 'DELETE'):
         raise ValueError('FUNCTION_OPERATION must be CREATE or DELETE')
-    source = function_path.read_text(encoding='utf-8') if operation == 'CREATE' else ''
+    request = {'name': function_name}
     host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
     app = NDNApp(face=TcpFace(host, port), keychain=KeychainDigest())
-    params = json.dumps({
-        'name': function_name,
-        'content': source,
-        'content_type': 'ndn',
-    }).encode('utf-8')
+    params = json.dumps(request).encode('utf-8')
     register_name = (os.getenv('MANAGER_DELETE_NAME', '/Manager/delete')
                      if operation == 'DELETE' else
                      os.getenv('MANAGER_REGISTER_NAME', '/Manager/register'))

@@ -35,12 +35,18 @@ def render(scripts, mode):
             raise ValueError(f'Unsupported script filename: {path.name}')
         code = path.read_text(encoding='utf-8')
         relative = path.relative_to(scripts).as_posix()
-        digest = hashlib.sha256((relative + '\0' + code).encode()).hexdigest()[:12]
+        version = 'fixed-configmap-v1' if mode == 'register' else ''
+        digest = hashlib.sha256((version + relative + '\0' + code).encode()).hexdigest()[:12]
         slug = re.sub('[^a-z0-9-]', '-', path.stem.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
+        configmap_name = f'function-{path.stem}' if mode == 'register' else name
+        if mode == 'register' and (len(configmap_name) > 253 or not re.fullmatch(
+                r'[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*', configmap_name)):
+            raise ValueError(f'Function filename cannot form a ConfigMap name: {path.name}')
         metadata = {'name': name, 'namespace': 'ndn'}
         items.append({'apiVersion': 'v1', 'kind': 'ConfigMap',
-                      'metadata': {**metadata, 'annotations': {'argocd.argoproj.io/sync-wave': '0'}},
+                      'metadata': {'name': configmap_name, 'namespace': 'ndn',
+                                   'annotations': {'argocd.argoproj.io/sync-wave': '0'}},
                       'data': {path.name: code}})
         env = [{'name': variable, 'value': '/scripts/' + path.name},
                {'name': 'NFD_CONFIG_PATH', 'value': '/etc/ndn-config/ADDRESS'}]
@@ -61,7 +67,7 @@ def render(scripts, mode):
                                'template': {'metadata': {'labels': {'app': f'function-{mode}'}},
                                             'spec': {'restartPolicy': 'Never', 'containers': [container],
                                                      'volumes': [
-                                                         {'name': 'script', 'configMap': {'name': name}},
+                                                         {'name': 'script', 'configMap': {'name': configmap_name}},
                                                          {'name': 'nfd-endpoint', 'configMap': {'name': 'nfd-config'}}]}}}})
     return items
 
