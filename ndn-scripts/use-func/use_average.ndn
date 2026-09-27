@@ -1,2 +1,5 @@
-let result = average(10, 50)
-print result
+  let first = average(10, 20)
+  print first
+
+  let second = average(30, 40)
+  print second
