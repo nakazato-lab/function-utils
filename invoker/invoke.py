@@ -1,7 +1,8 @@
-"""Run a mounted-in-image .ndn client script through ndnc."""
+"""Run .ndn source provided by the Job through ndnc."""
 import asyncio
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 from utils.nfd import wait_for_nfd
@@ -11,9 +12,19 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 
 
 async def main():
-    script_path = Path(os.environ['NDN_SCRIPT_PATH'])
-    if not script_path.is_file():
-        raise FileNotFoundError(f'NDN script not found: {script_path}')
+    source = os.environ['NDN_SCRIPT_SOURCE']
+    script_name = os.environ['NDN_SCRIPT_NAME']
+    if not script_name.endswith('.ndn') or Path(script_name).name != script_name:
+        raise ValueError('NDN_SCRIPT_NAME must be an .ndn filename')
+    if not source.strip() or '\x00' in source:
+        raise ValueError('NDN_SCRIPT_SOURCE must be nonempty text without NUL characters')
+    with tempfile.TemporaryDirectory(prefix='ndn-invoke-') as directory:
+        script_path = Path(directory) / script_name
+        script_path.write_text(source, encoding='utf-8')
+        await run_script(script_path)
+
+
+async def run_script(script_path):
     host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
     environment = os.environ.copy()
     environment['NDN_CLIENT_TRANSPORT'] = f'tcp4://{host}:{port}'
