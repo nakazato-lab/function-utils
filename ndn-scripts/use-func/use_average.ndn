@@ -1,2 +1,2 @@
-let result = average(10, 20)
+let result = average(10, 50)
 print result
