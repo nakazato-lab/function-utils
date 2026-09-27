@@ -20,7 +20,7 @@ ManifestDumper.add_representer(str, represent_string)
 
 def render(scripts, mode):
     folder, variable, executable, wave = (
-        ('func', 'FUNCTION_PATH', 'register', '1') if mode == 'register'
+        ('func', 'FUNCTION_NAME', 'register', '1') if mode == 'register'
         else ('use-func', 'NDN_SCRIPT_PATH', 'invoke', '2')
     )
     image = 'registerer' if mode == 'register' else 'invoker'
@@ -35,7 +35,7 @@ def render(scripts, mode):
             raise ValueError(f'Unsupported script filename: {path.name}')
         code = path.read_text(encoding='utf-8')
         relative = path.relative_to(scripts).as_posix()
-        version = 'fixed-configmap-v1' if mode == 'register' else ''
+        version = 'function-name-v1' if mode == 'register' else ''
         digest = hashlib.sha256((version + relative + '\0' + code).encode()).hexdigest()[:12]
         slug = re.sub('[^a-z0-9-]', '-', path.stem.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
@@ -48,7 +48,7 @@ def render(scripts, mode):
                       'metadata': {'name': configmap_name, 'namespace': 'ndn',
                                    'annotations': {'argocd.argoproj.io/sync-wave': '0'}},
                       'data': {path.name: code}})
-        env = [{'name': variable, 'value': '/scripts/' + path.name},
+        env = [{'name': variable, 'value': path.stem if mode == 'register' else '/scripts/' + path.name},
                {'name': 'NFD_CONFIG_PATH', 'value': '/etc/ndn-config/ADDRESS'}]
         if mode == 'register':
             env.append({'name': 'MANAGER_REGISTER_NAME', 'value': '/Manager/register'})
@@ -83,7 +83,8 @@ def deletion_jobs(previous, current):
         spec = job['spec']['template']['spec']
         container = spec['containers'][0]
         env = {item['name']: item['value'] for item in container['env']}
-        filename = Path(env['FUNCTION_PATH']).name
+        function_name = env['FUNCTION_NAME']
+        filename = function_name + '.ndn'
         if filename in current_names:
             continue
         # The .ndn file associated with this Job is already confirmed to be absent from current.
@@ -92,7 +93,7 @@ def deletion_jobs(previous, current):
             job['metadata']['name'] = old_name.replace('function-register-', 'function-delete-', 1)
             container['env'].append({'name': 'FUNCTION_OPERATION', 'value': 'DELETE'})
             job['spec']['activeDeadlineSeconds'] = 300
-            # DELETE needs only the filename, not the old source ConfigMap.
+            # DELETE needs only the function name, not the old source ConfigMap.
             container['volumeMounts'] = [v for v in container['volumeMounts'] if v['name'] != 'script']
             spec['volumes'] = [v for v in spec['volumes'] if v['name'] != 'script']
         result.append(job)

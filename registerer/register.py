@@ -3,7 +3,6 @@ import asyncio
 import json
 import logging
 import os
-from pathlib import Path
 
 from ndn.app import NDNApp
 from ndn.encoding import Name
@@ -18,8 +17,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 
 
 async def main():
-    function_path = Path(os.environ['FUNCTION_PATH'])
-    function_name = function_path.stem
+    function_name = os.environ['FUNCTION_NAME']
+    if not function_name.strip():
+        raise ValueError('FUNCTION_NAME must not be empty')
     operation = os.getenv('FUNCTION_OPERATION', 'CREATE')
     if operation not in ('CREATE', 'DELETE'):
         raise ValueError('FUNCTION_OPERATION must be CREATE or DELETE')
@@ -33,8 +33,8 @@ async def main():
 
     async def register():
         try:
-            logging.info('Sending register Interest: %s (name=%s, file=%s)',
-                         register_name, function_name, function_path)
+            logging.info('Sending %s Interest: %s (name=%s)',
+                         operation, register_name, function_name)
             _, _, content = await app.express_interest(
                 Name.from_str(register_name), app_param=params,
                 must_be_fresh=True, can_be_prefix=False, lifetime=120000)
