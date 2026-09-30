@@ -1,4 +1,4 @@
-"""Register an .ndn function with the Manager through NFD."""
+"""Register a function with the Manager through NFD."""
 import asyncio
 import json
 import logging
@@ -16,7 +16,7 @@ from utils.nfd import wait_for_nfd
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 
-async def main():
+def build_request():
     function_name = os.environ['FUNCTION_NAME']
     if not function_name.strip():
         raise ValueError('FUNCTION_NAME must not be empty')
@@ -29,6 +29,18 @@ async def main():
         if not code.strip() or '\x00' in code:
             raise ValueError('FUNCTION_CODE must be nonempty text without NUL characters')
         request['content'] = code
+        preference = {key: os.getenv(f'FUNCTION_PREFERENCE_{key.upper()}', 'medium')
+                      for key in ('cpu', 'memory')}
+        for key, value in preference.items():
+            if value not in ('high', 'medium', 'low'):
+                raise ValueError(f'FUNCTION_PREFERENCE_{key.upper()} must be high, medium, or low')
+        request['preference'] = preference
+    return operation, request
+
+
+async def main():
+    operation, request = build_request()
+    function_name = request['name']
     host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
     app = NDNApp(face=TcpFace(host, port), keychain=KeychainDigest())
     params = json.dumps(request, ensure_ascii=False).encode('utf-8')

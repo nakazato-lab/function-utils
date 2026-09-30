@@ -1,0 +1,9 @@
+function:
+  name: average
+  source: |
+    let avg = (arg0 + arg1) / 2
+    return avg
+
+preference:
+  cpu: high
+  memory: medium

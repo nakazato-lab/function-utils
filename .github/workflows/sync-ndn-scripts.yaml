@@ -6,6 +6,8 @@ on:
     paths:
       - 'ndn-scripts/func/**'
       - 'ndn-scripts/use-func/**'
+      - '.github/scripts/**'
+      - '.github/workflows/sync-ndn-scripts.yaml'
 
 permissions:
   contents: read

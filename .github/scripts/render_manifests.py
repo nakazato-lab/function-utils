@@ -1,6 +1,7 @@
 """Render script Jobs without accessing a cluster."""
 import argparse
 import hashlib
+import json
 import yaml
 from pathlib import Path
 import re
@@ -18,6 +19,29 @@ def represent_string(dumper, value):
 ManifestDumper.add_representer(str, represent_string)
 
 
+def load_function(path):
+    """Read the small function schema used by registration Jobs."""
+    data = yaml.safe_load(path.read_text(encoding='utf-8'))
+    if not isinstance(data, dict) or set(data) - {'function', 'preference'}:
+        raise ValueError(f'{path}: expected function and optional preference mappings')
+    function = data.get('function')
+    if not isinstance(function, dict) or set(function) != {'name', 'source'}:
+        raise ValueError(f'{path}: function must contain exactly name and source')
+    name, source = function['name'], function['source']
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', name):
+        raise ValueError(f'{path}: function.name must be a nonempty single name (letters, digits, _, ., -)')
+    if not isinstance(source, str) or not source.strip() or '\x00' in source:
+        raise ValueError(f'{path}: function.source must be nonempty text without NUL characters')
+    preference = data.get('preference', {})
+    if not isinstance(preference, dict) or set(preference) - {'cpu', 'memory'}:
+        raise ValueError(f'{path}: preference supports only cpu and memory')
+    preference = {key: preference.get(key, 'medium') for key in ('cpu', 'memory')}
+    for key, value in preference.items():
+        if not isinstance(value, str) or value not in ('high', 'medium', 'low'):
+            raise ValueError(f'{path}: preference.{key} must be high, medium, or low')
+    return name, source, preference
+
+
 def render(scripts, mode):
     folder, executable, wave = (
         ('func', 'register', '1') if mode == 'register'
@@ -25,21 +49,36 @@ def render(scripts, mode):
     )
     image = 'registerer' if mode == 'register' else 'invoker'
     items = []
-    paths = sorted((scripts / folder).rglob('*.ndn'))
     if mode == 'register':
-        names = [p.stem for p in paths]
-        if len(names) != len(set(names)):
-            raise ValueError('Function filenames must be unique: their stems become NDN prefixes')
+        if any((scripts / folder).rglob('*.ndn')):
+            raise ValueError('Migrate func/*.ndn to YAML with function.name and function.source')
+        paths = sorted(p for p in (scripts / folder).rglob('*')
+                       if p.is_file() and p.suffix in ('.yaml', '.yml'))
+    else:
+        paths = sorted((scripts / folder).rglob('*.ndn'))
+    names = set()
     for path in paths:
-        if not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
-            raise ValueError(f'Unsupported script filename: {path.name}')
-        code = path.read_text(encoding='utf-8')
-        if not code.strip() or '\x00' in code:
-            raise ValueError(f'Script must be nonempty text without NUL characters: {path}')
-        relative = path.relative_to(scripts).as_posix()
-        version = 'inline-code-v1'
-        digest = hashlib.sha256((version + relative + '\0' + code).encode()).hexdigest()[:12]
-        slug = re.sub('[^a-z0-9-]', '-', path.stem.lower()).strip('-')[:25] or 'script'
+        if mode == 'register':
+            function_name, code, preference = load_function(path)
+            if function_name in names:
+                raise ValueError(f'Duplicate function.name: {function_name}')
+            names.add(function_name)
+            # A preference-only edit must also create a new immutable Job.
+            identity = json.dumps([function_name, code, preference], sort_keys=True)
+            slug_source = function_name
+            version = 'function-yaml-v1'
+        else:
+            if not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
+                raise ValueError(f'Unsupported script filename: {path.name}')
+            code = path.read_text(encoding='utf-8')
+            if not code.strip() or '\x00' in code:
+                raise ValueError(f'Script must be nonempty text without NUL characters: {path}')
+            relative = path.relative_to(scripts).as_posix()
+            identity = relative + '\0' + code
+            slug_source = path.stem
+            version = 'nlsr-service-v1'
+        digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
+        slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
         metadata = {'name': name, 'namespace': 'ndn'}
         env = [{'name': 'NFD_CONFIG_PATH', 'value': '/etc/ndn-config/ADDRESS'}]
@@ -47,8 +86,10 @@ def render(scripts, mode):
         source_value = code.replace('$', '$$')
         if mode == 'register':
             env.extend([
-                {'name': 'FUNCTION_NAME', 'value': path.stem},
+                {'name': 'FUNCTION_NAME', 'value': function_name},
                 {'name': 'FUNCTION_CODE', 'value': source_value},
+                {'name': 'FUNCTION_PREFERENCE_CPU', 'value': preference['cpu']},
+                {'name': 'FUNCTION_PREFERENCE_MEMORY', 'value': preference['memory']},
                 {'name': 'MANAGER_REGISTER_NAME', 'value': '/Manager/register'},
             ])
         else:
@@ -70,7 +111,7 @@ def render(scripts, mode):
                                'template': {'metadata': {'labels': {'app': f'function-{mode}'}},
                                             'spec': {'restartPolicy': 'Never', 'containers': [container],
                                                      'volumes': [
-                                                         {'name': 'nfd-endpoint', 'configMap': {'name': 'nfd-config'}}]}}}})
+                                                         {'name': 'nfd-endpoint', 'configMap': {'name': 'nfd-client-config'}}]}}}})
     return items
 
 
@@ -91,16 +132,24 @@ def deletion_jobs(previous, current):
         function_name = env['FUNCTION_NAME']
         if function_name in current_names:
             continue
-        # The .ndn file associated with this Job is already confirmed to be absent from current.
+        # This function name is no longer present in the current definitions.
         if env.get('FUNCTION_OPERATION') != 'DELETE':
             old_name = job['metadata']['name']
             job['metadata']['name'] = old_name.replace('function-register-', 'function-delete-', 1)
-            container['env'] = [item for item in container['env'] if item['name'] != 'FUNCTION_CODE']
+            container['env'] = [item for item in container['env'] if item['name'] not in ('FUNCTION_CODE', 'FUNCTION_PREFERENCE_CPU', 'FUNCTION_PREFERENCE_MEMORY')]
             container['env'].append({'name': 'FUNCTION_OPERATION', 'value': 'DELETE'})
             job['spec']['activeDeadlineSeconds'] = 300
             # DELETE needs only the function name, not the old source ConfigMap.
             container['volumeMounts'] = [v for v in container['volumeMounts'] if v['name'] != 'script']
             spec['volumes'] = [v for v in spec['volumes'] if v['name'] != 'script']
+        # A Job's Pod template is immutable: changing its endpoint needs a new name.
+        for volume in spec.get('volumes', []):
+            config_map = volume.get('configMap', {})
+            if config_map.get('name') == 'nfd-config':
+                config_map['name'] = 'nfd-client-config'
+                old_name = job['metadata']['name']
+                digest = hashlib.sha256(('nlsr-service-v1' + old_name).encode()).hexdigest()[:12]
+                job['metadata']['name'] = old_name.rsplit('-', 1)[0] + '-' + digest
         result.append(job)
     return result
 
