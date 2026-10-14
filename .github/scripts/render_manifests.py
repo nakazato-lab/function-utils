@@ -33,9 +33,10 @@ def load_function(path):
     if not isinstance(source, str) or not source.strip() or '\x00' in source:
         raise ValueError(f'{path}: function.source must be nonempty text without NUL characters')
     preference = data.get('preference', {})
-    if not isinstance(preference, dict) or set(preference) - {'cpu', 'memory'}:
-        raise ValueError(f'{path}: preference supports only cpu and memory')
-    preference = {key: preference.get(key, 'medium') for key in ('cpu', 'memory')}
+    if not isinstance(preference, dict) or set(preference) - {'cpu', 'memory', 'bandwidth'}:
+        raise ValueError(f'{path}: preference supports only cpu, memory, and bandwidth')
+    preference = {key: preference.get(key, 'medium')
+                  for key in ('cpu', 'memory', 'bandwidth')}
     for key, value in preference.items():
         if not isinstance(value, str) or value not in ('high', 'medium', 'low'):
             raise ValueError(f'{path}: preference.{key} must be high, medium, or low')
@@ -90,6 +91,7 @@ def render(scripts, mode):
                 {'name': 'FUNCTION_CODE', 'value': source_value},
                 {'name': 'FUNCTION_PREFERENCE_CPU', 'value': preference['cpu']},
                 {'name': 'FUNCTION_PREFERENCE_MEMORY', 'value': preference['memory']},
+                {'name': 'FUNCTION_PREFERENCE_BANDWIDTH', 'value': preference['bandwidth']},
                 {'name': 'MANAGER_REGISTER_NAME', 'value': '/Manager/register'},
             ])
         else:
@@ -136,7 +138,9 @@ def deletion_jobs(previous, current):
         if env.get('FUNCTION_OPERATION') != 'DELETE':
             old_name = job['metadata']['name']
             job['metadata']['name'] = old_name.replace('function-register-', 'function-delete-', 1)
-            container['env'] = [item for item in container['env'] if item['name'] not in ('FUNCTION_CODE', 'FUNCTION_PREFERENCE_CPU', 'FUNCTION_PREFERENCE_MEMORY')]
+            container['env'] = [item for item in container['env'] if item['name'] not in (
+                'FUNCTION_CODE', 'FUNCTION_PREFERENCE_CPU',
+                'FUNCTION_PREFERENCE_MEMORY', 'FUNCTION_PREFERENCE_BANDWIDTH')]
             container['env'].append({'name': 'FUNCTION_OPERATION', 'value': 'DELETE'})
             job['spec']['activeDeadlineSeconds'] = 300
             # DELETE needs only the function name, not the old source ConfigMap.

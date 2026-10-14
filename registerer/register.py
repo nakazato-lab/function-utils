@@ -30,7 +30,7 @@ def build_request():
             raise ValueError('FUNCTION_CODE must be nonempty text without NUL characters')
         request['content'] = code
         preference = {key: os.getenv(f'FUNCTION_PREFERENCE_{key.upper()}', 'medium')
-                      for key in ('cpu', 'memory')}
+                      for key in ('cpu', 'memory', 'bandwidth')}
         for key, value in preference.items():
             if value not in ('high', 'medium', 'low'):
                 raise ValueError(f'FUNCTION_PREFERENCE_{key.upper()} must be high, medium, or low')

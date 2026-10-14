@@ -7,3 +7,4 @@ function:
 preference:
   cpu: high
   memory: medium
+  bandwidth: medium
