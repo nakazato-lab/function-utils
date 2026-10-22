@@ -25,7 +25,7 @@ def load_function(path):
     if not isinstance(data, dict) or set(data) - {'function', 'preference'}:
         raise ValueError(f'{path}: expected function and optional preference mappings')
     function = data.get('function')
-    if not isinstance(function, dict) or set(function) != {'name', 'source'}:
+    if not isinstance(function, dict) or set(function) != {'name', 'runtime', 'source'}:
         raise ValueError(f'{path}: function must contain exactly name, runtime, and source')
     name, runtime, source = function['name'], function['runtime'], function['source']
     if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', name):
