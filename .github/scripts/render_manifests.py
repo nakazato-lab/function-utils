@@ -26,10 +26,12 @@ def load_function(path):
         raise ValueError(f'{path}: expected function and optional preference mappings')
     function = data.get('function')
     if not isinstance(function, dict) or set(function) != {'name', 'source'}:
-        raise ValueError(f'{path}: function must contain exactly name and source')
-    name, source = function['name'], function['source']
+        raise ValueError(f'{path}: function must contain exactly name, runtime, and source')
+    name, runtime, source = function['name'], function['runtime'], function['source']
     if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', name):
         raise ValueError(f'{path}: function.name must be a nonempty single name (letters, digits, _, ., -)')
+    if runtime != "ndn":
+        raise ValueError(f"{path}: function.runtime currently supports only ndn")
     if not isinstance(source, str) or not source.strip() or '\x00' in source:
         raise ValueError(f'{path}: function.source must be nonempty text without NUL characters')
     preference = data.get('preference', {})
@@ -40,7 +42,7 @@ def load_function(path):
     for key, value in preference.items():
         if not isinstance(value, str) or value not in ('high', 'medium', 'low'):
             raise ValueError(f'{path}: preference.{key} must be high, medium, or low')
-    return name, source, preference
+    return name, runtime, source, preference
 
 
 def render(scripts, mode):
@@ -60,12 +62,12 @@ def render(scripts, mode):
     names = set()
     for path in paths:
         if mode == 'register':
-            function_name, code, preference = load_function(path)
+            function_name, runtime, code, preference = load_function(path)
             if function_name in names:
                 raise ValueError(f'Duplicate function.name: {function_name}')
             names.add(function_name)
             # A preference-only edit must also create a new immutable Job.
-            identity = json.dumps([function_name, code, preference], sort_keys=True)
+            identity = json.dumps([function_name, runtime, code, preference], sort_keys=True)
             slug_source = function_name
             version = 'function-yaml-v1'
         else:
@@ -88,6 +90,7 @@ def render(scripts, mode):
         if mode == 'register':
             env.extend([
                 {'name': 'FUNCTION_NAME', 'value': function_name},
+                {'name': 'FUNCTION_RUNTIME', 'value': runtime},
                 {'name': 'FUNCTION_CODE', 'value': source_value},
                 {'name': 'FUNCTION_PREFERENCE_CPU', 'value': preference['cpu']},
                 {'name': 'FUNCTION_PREFERENCE_MEMORY', 'value': preference['memory']},
