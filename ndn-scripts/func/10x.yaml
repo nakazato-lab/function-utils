@@ -1,0 +1,11 @@
+function:
+  name: 10x
+  runtime: python
+  source: |
+    def main(arg0):
+        return arg0 * 10
+
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium
