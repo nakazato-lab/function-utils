@@ -1,5 +1,6 @@
 function:
   name: average-3
+  runtime: ndn
   source: |
     let avg = (arg0 + arg1 + arg2) / 3
     return avg

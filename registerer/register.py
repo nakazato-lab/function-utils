@@ -25,9 +25,13 @@ def build_request():
         raise ValueError('FUNCTION_OPERATION must be CREATE or DELETE')
     request = {'name': function_name}
     if operation == 'CREATE':
+        runtime = os.environ['FUNCTION_RUNTIME']
+        if runtime != 'ndn':
+            raise ValueError('FUNCTION_RUNTIME currently supports only ndn')
         code = os.environ['FUNCTION_CODE']
         if not code.strip() or '\x00' in code:
             raise ValueError('FUNCTION_CODE must be nonempty text without NUL characters')
+        request['runtime'] = runtime
         request['content'] = code
         preference = {key: os.getenv(f'FUNCTION_PREFERENCE_{key.upper()}', 'medium')
                       for key in ('cpu', 'memory', 'bandwidth')}
