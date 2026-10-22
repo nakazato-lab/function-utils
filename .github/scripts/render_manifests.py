@@ -110,13 +110,25 @@ def render(scripts, mode):
             'volumeMounts': [
                 {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config', 'readOnly': True}],
         }
+        nfd_address = {
+            'name': 'nfd-address',
+            'image': 'ghcr.io/nakazato-lab/ndn-dhcp/ndn-dhcp-client:latest',
+            'imagePullPolicy': 'Always',
+            'env': [{
+                'name': 'NODE_NAME',
+                'valueFrom': {'fieldRef': {'fieldPath': 'spec.nodeName'}},
+            }],
+            'volumeMounts': [
+                {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config'}],
+        }
         items.append({'apiVersion': 'batch/v1', 'kind': 'Job',
                       'metadata': {**metadata, 'annotations': {'argocd.argoproj.io/sync-wave': wave}},
                       'spec': {'backoffLimit': 2, 'activeDeadlineSeconds': 180 if mode == 'register' else 300,
                                'template': {'metadata': {'labels': {'app': f'function-{mode}'}},
-                                            'spec': {'restartPolicy': 'Never', 'containers': [container],
+                                            'spec': {'restartPolicy': 'Never', 'initContainers': [nfd_address],
+                                                     'containers': [container],
                                                      'volumes': [
-                                                         {'name': 'nfd-endpoint', 'configMap': {'name': 'nfd-client-config'}}]}}}})
+                                                         {'name': 'nfd-endpoint', 'emptyDir': {}}]}}}})
     return items
 
 
@@ -149,14 +161,6 @@ def deletion_jobs(previous, current):
             # DELETE needs only the function name, not the old source ConfigMap.
             container['volumeMounts'] = [v for v in container['volumeMounts'] if v['name'] != 'script']
             spec['volumes'] = [v for v in spec['volumes'] if v['name'] != 'script']
-        # A Job's Pod template is immutable: changing its endpoint needs a new name.
-        for volume in spec.get('volumes', []):
-            config_map = volume.get('configMap', {})
-            if config_map.get('name') == 'nfd-config':
-                config_map['name'] = 'nfd-client-config'
-                old_name = job['metadata']['name']
-                digest = hashlib.sha256(('nlsr-service-v1' + old_name).encode()).hexdigest()[:12]
-                job['metadata']['name'] = old_name.rsplit('-', 1)[0] + '-' + digest
         result.append(job)
     return result
 
