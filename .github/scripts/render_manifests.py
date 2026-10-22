@@ -30,8 +30,8 @@ def load_function(path):
     name, runtime, source = function['name'], function['runtime'], function['source']
     if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', name):
         raise ValueError(f'{path}: function.name must be a nonempty single name (letters, digits, _, ., -)')
-    if runtime != "ndn":
-        raise ValueError(f"{path}: function.runtime currently supports only ndn")
+    if runtime not in ('ndn', 'python'):
+        raise ValueError(f"{path}: function.runtime must be ndn or python")
     if not isinstance(source, str) or not source.strip() or '\x00' in source:
         raise ValueError(f'{path}: function.source must be nonempty text without NUL characters')
     preference = data.get('preference', {})

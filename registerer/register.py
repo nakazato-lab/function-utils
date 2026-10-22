@@ -26,8 +26,8 @@ def build_request():
     request = {'name': function_name}
     if operation == 'CREATE':
         runtime = os.environ['FUNCTION_RUNTIME']
-        if runtime != 'ndn':
-            raise ValueError('FUNCTION_RUNTIME currently supports only ndn')
+        if runtime not in ('ndn', 'python'):
+            raise ValueError('FUNCTION_RUNTIME must be ndn or python')
         code = os.environ['FUNCTION_CODE']
         if not code.strip() or '\x00' in code:
             raise ValueError('FUNCTION_CODE must be nonempty text without NUL characters')
