@@ -2,8 +2,8 @@ function:
   name: ten_x
   runtime: python
   source: |
-    def main(arg0):
-        return arg0 * 10
+    result = arg0 * 10
+    return result
 
 preference:
   cpu: medium
