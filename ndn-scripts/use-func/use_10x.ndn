@@ -1,0 +1,5 @@
+  let first = 10x(10)
+  print first
+
+  let second = 10x(20)
+  print second
