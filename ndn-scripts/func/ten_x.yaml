@@ -1,5 +1,5 @@
 function:
-  name: 10x
+  name: ten_x
   runtime: python
   source: |
     def main(arg0):

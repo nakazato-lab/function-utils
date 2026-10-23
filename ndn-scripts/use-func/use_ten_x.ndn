@@ -1,0 +1,5 @@
+  let first = ten_x(10)
+  print first
+
+  let second = ten_x(20)
+  print second
