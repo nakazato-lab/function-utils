@@ -2,7 +2,7 @@ function:
   name: ten_x
   runtime: python
   source: |
-    result = arg0 * 10
+    let result = arg0 * 10
     return result
 
 preference:
