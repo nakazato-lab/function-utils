@@ -54,8 +54,8 @@ async def main():
 
     async def register():
         try:
-            logging.info('Sending %s Interest: %s (name=%s)',
-                         operation, register_name, function_name)
+            logging.info('Sending %s Interest: %s (ApplicationParameters=%s)',
+                         operation, register_name, params.decode('utf-8'))
             _, _, content = await app.express_interest(
                 Name.from_str(register_name), app_param=params,
                 must_be_fresh=True, can_be_prefix=False, lifetime=120000)
