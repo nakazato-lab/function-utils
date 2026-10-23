@@ -2,8 +2,10 @@ function:
   name: ten_x
   runtime: python
   source: |
-    let result = arg0 * 10
-    return result
+    import sys
+
+    arg0 = int(sys.argv[1])
+    print(arg0 * 10)
 
 preference:
   cpu: medium
