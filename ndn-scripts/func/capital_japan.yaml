@@ -1,0 +1,10 @@
+function:
+  name: capital_japan
+  runtime: python
+  source: |
+    print("Tokyo")
+
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium
