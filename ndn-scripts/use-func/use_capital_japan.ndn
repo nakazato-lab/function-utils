@@ -1,2 +1,2 @@
-let capital = interest "/capital_japan"
+let capital = interest "/capital/japan"
 print capital
