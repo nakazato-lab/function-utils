@@ -28,8 +28,12 @@ def load_function(path):
     if not isinstance(function, dict) or set(function) != {'name', 'runtime', 'source'}:
         raise ValueError(f'{path}: function must contain exactly name, runtime, and source')
     name, runtime, source = function['name'], function['runtime'], function['source']
-    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', name):
-        raise ValueError(f'{path}: function.name must be a nonempty single name (letters, digits, _, ., -)')
+    name_component = r'[A-Za-z0-9_][A-Za-z0-9_.-]*'
+    name_pattern = rf'(?:{name_component}|/(?:{name_component}/)*{name_component})'
+    if not isinstance(name, str) or not re.fullmatch(name_pattern, name):
+        raise ValueError(
+            f'{path}: function.name must be a single name or an absolute NDN prefix '
+            '(components use letters, digits, _, ., -)')
     if runtime not in ('ndn', 'python'):
         raise ValueError(f"{path}: function.runtime must be ndn or python")
     if not isinstance(source, str) or not source.strip() or '\x00' in source:
