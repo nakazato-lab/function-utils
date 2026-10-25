@@ -1,0 +1,2 @@
+let result = rename_to_kanji("/capital/japan")
+print result
