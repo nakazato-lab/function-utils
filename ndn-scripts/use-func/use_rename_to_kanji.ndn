@@ -1,2 +1,2 @@
-let result = rename_to_kanji("/capital/japan")
+let result = rename_to_kanji(interest "/capital/japan")
 print result
