@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'ndn-scripts/func/**'
+      - 'ndn-scripts/yaml/**'
       - 'ndn-scripts/use-func/**'
       - '.github/scripts/**'
       - '.github/workflows/sync-ndn-scripts.yaml'

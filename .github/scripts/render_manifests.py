@@ -19,15 +19,15 @@ def represent_string(dumper, value):
 ManifestDumper.add_representer(str, represent_string)
 
 
-def load_function(path):
-    """Read the small function schema used by registration Jobs."""
+def load_function(path, source_dir):
+    """Read a function definition and its source file for a registration Job."""
     data = yaml.safe_load(path.read_text(encoding='utf-8'))
     if not isinstance(data, dict) or set(data) - {'function', 'preference'}:
         raise ValueError(f'{path}: expected function and optional preference mappings')
     function = data.get('function')
     if not isinstance(function, dict) or set(function) != {'name', 'runtime', 'source'}:
         raise ValueError(f'{path}: function must contain exactly name, runtime, and source')
-    name, runtime, source = function['name'], function['runtime'], function['source']
+    name, runtime, source_file = function['name'], function['runtime'], function['source']
     name_component = r'[A-Za-z0-9_][A-Za-z0-9_.-]*'
     name_pattern = rf'(?:{name_component}|/(?:{name_component}/)*{name_component})'
     if not isinstance(name, str) or not re.fullmatch(name_pattern, name):
@@ -36,8 +36,15 @@ def load_function(path):
             '(components use letters, digits, _, ., -)')
     if runtime not in ('ndn', 'python'):
         raise ValueError(f"{path}: function.runtime must be ndn or python")
-    if not isinstance(source, str) or not source.strip() or '\x00' in source:
-        raise ValueError(f'{path}: function.source must be nonempty text without NUL characters')
+    if (not isinstance(source_file, str) or not source_file
+            or Path(source_file).name != source_file):
+        raise ValueError(f'{path}: function.source must be a filename in ndn-scripts/func')
+    source_path = source_dir / source_file
+    if not source_path.is_file():
+        raise ValueError(f'{path}: function source does not exist: {source_path}')
+    source = source_path.read_text(encoding='utf-8')
+    if not source.strip() or '\x00' in source:
+        raise ValueError(f'{source_path}: source must be nonempty text without NUL characters')
     preference = data.get('preference', {})
     if not isinstance(preference, dict) or set(preference) - {'cpu', 'memory', 'bandwidth'}:
         raise ValueError(f'{path}: preference supports only cpu, memory, and bandwidth')
@@ -51,14 +58,14 @@ def load_function(path):
 
 def render(scripts, mode):
     folder, executable, wave = (
-        ('func', 'register', '1') if mode == 'register'
+        ('yaml', 'register', '1') if mode == 'register'
         else ('use-func', 'invoke', '2')
     )
     image = 'registerer' if mode == 'register' else 'invoker'
     items = []
     if mode == 'register':
         if any((scripts / folder).rglob('*.ndn')):
-            raise ValueError('Migrate func/*.ndn to YAML with function.name and function.source')
+            raise ValueError('Registration definitions must be YAML files')
         paths = sorted(p for p in (scripts / folder).rglob('*')
                        if p.is_file() and p.suffix in ('.yaml', '.yml'))
     else:
@@ -66,7 +73,7 @@ def render(scripts, mode):
     names = set()
     for path in paths:
         if mode == 'register':
-            function_name, runtime, code, preference = load_function(path)
+            function_name, runtime, code, preference = load_function(path, scripts / 'func')
             if function_name in names:
                 raise ValueError(f'Duplicate function.name: {function_name}')
             names.add(function_name)
