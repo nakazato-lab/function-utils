@@ -1,6 +1,7 @@
 name: Sync NDN scripts to manifests
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -22,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           path: function-utils
       - uses: actions/checkout@v4
         with:
