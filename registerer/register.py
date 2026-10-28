@@ -4,7 +4,6 @@ import json
 import logging
 import os
 
-from ndn.app import NDNApp
 from ndn.encoding import Name
 from ndn.security import KeychainDigest
 from ndn.transport.stream_face import TcpFace
@@ -12,6 +11,7 @@ from ndn.types import InterestNack, InterestTimeout
 from segmented_node_wrapper import SegmentedNodeWrapper
 
 from utils.nfd import wait_for_nfd
+from utils.ndn_routing import RoutedNDNApp
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -62,7 +62,7 @@ async def main():
     operation, request = build_request()
     function_name = request['name']
     host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
-    app = NDNApp(face=TcpFace(host, port), keychain=KeychainDigest())
+    app = RoutedNDNApp(face=TcpFace(host, port), keychain=KeychainDigest())
     register_name = (os.getenv('MANAGER_DELETE_NAME', '/Manager/delete')
                      if operation == 'DELETE' else
                      os.getenv('MANAGER_REGISTER_NAME', '/Manager/register'))
