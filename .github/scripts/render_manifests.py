@@ -25,8 +25,10 @@ def load_function(path, source_dir):
     if not isinstance(data, dict) or set(data) - {'function', 'preference'}:
         raise ValueError(f'{path}: expected function and optional preference mappings')
     function = data.get('function')
-    if not isinstance(function, dict) or set(function) != {'name', 'runtime', 'source'}:
-        raise ValueError(f'{path}: function must contain exactly name, runtime, and source')
+    allowed_function_keys = {'name', 'runtime', 'source', 'requirements'}
+    if (not isinstance(function, dict) or set(function) - allowed_function_keys
+            or not {'name', 'runtime', 'source'} <= set(function)):
+        raise ValueError(f'{path}: function must contain name, runtime, source, and optional requirements')
     name, runtime, source_file = function['name'], function['runtime'], function['source']
     name_component = r'[A-Za-z0-9_][A-Za-z0-9_.-]*'
     name_pattern = rf'(?:{name_component}|/(?:{name_component}/)*{name_component})'
@@ -45,6 +47,21 @@ def load_function(path, source_dir):
     source = source_path.read_text(encoding='utf-8')
     if not source.strip() or '\x00' in source:
         raise ValueError(f'{source_path}: source must be nonempty text without NUL characters')
+    requirements_file = function.get('requirements')
+    requirements = []
+    if requirements_file is not None:
+        if (not isinstance(requirements_file, str) or not requirements_file
+                or Path(requirements_file).name != requirements_file):
+            raise ValueError(f'{path}: function.requirements must be a filename in ndn-scripts/func')
+        requirements_path = source_dir / requirements_file
+        if not requirements_path.is_file():
+            raise ValueError(f'{path}: requirements file does not exist: {requirements_path}')
+        requirements = [line.strip() for line in requirements_path.read_text(encoding='utf-8').splitlines()
+                        if line.strip() and not line.lstrip().startswith('#')]
+        if any('\x00' in requirement for requirement in requirements):
+            raise ValueError(f'{requirements_path}: requirements must not contain NUL characters')
+    if runtime != 'python' and requirements:
+        raise ValueError(f'{path}: requirements are supported only for the python runtime')
     preference = data.get('preference', {})
     if not isinstance(preference, dict) or set(preference) - {'cpu', 'memory', 'bandwidth'}:
         raise ValueError(f'{path}: preference supports only cpu, memory, and bandwidth')
@@ -53,7 +70,7 @@ def load_function(path, source_dir):
     for key, value in preference.items():
         if not isinstance(value, str) or value not in ('high', 'medium', 'low'):
             raise ValueError(f'{path}: preference.{key} must be high, medium, or low')
-    return name, runtime, source, preference
+    return name, runtime, source, requirements, preference
 
 
 def render(scripts, mode):
@@ -73,12 +90,12 @@ def render(scripts, mode):
     names = set()
     for path in paths:
         if mode == 'register':
-            function_name, runtime, code, preference = load_function(path, scripts / 'func')
+            function_name, runtime, code, requirements, preference = load_function(path, scripts / 'func')
             if function_name in names:
                 raise ValueError(f'Duplicate function.name: {function_name}')
             names.add(function_name)
             # A preference-only edit must also create a new immutable Job.
-            identity = json.dumps([function_name, runtime, code, preference], sort_keys=True)
+            identity = json.dumps([function_name, runtime, code, requirements, preference], sort_keys=True)
             slug_source = function_name
             version = 'function-yaml-v1'
         else:
@@ -103,6 +120,7 @@ def render(scripts, mode):
                 {'name': 'FUNCTION_NAME', 'value': function_name},
                 {'name': 'FUNCTION_RUNTIME', 'value': runtime},
                 {'name': 'FUNCTION_CODE', 'value': source_value},
+                {'name': 'FUNCTION_REQUIREMENTS', 'value': json.dumps(requirements).replace('$', '$$')},
                 {'name': 'FUNCTION_PREFERENCE_CPU', 'value': preference['cpu']},
                 {'name': 'FUNCTION_PREFERENCE_MEMORY', 'value': preference['memory']},
                 {'name': 'FUNCTION_PREFERENCE_BANDWIDTH', 'value': preference['bandwidth']},
@@ -165,7 +183,7 @@ def deletion_jobs(previous, current):
             old_name = job['metadata']['name']
             job['metadata']['name'] = old_name.replace('function-register-', 'function-delete-', 1)
             container['env'] = [item for item in container['env'] if item['name'] not in (
-                'FUNCTION_CODE', 'FUNCTION_PREFERENCE_CPU',
+                'FUNCTION_CODE', 'FUNCTION_REQUIREMENTS', 'FUNCTION_PREFERENCE_CPU',
                 'FUNCTION_PREFERENCE_MEMORY', 'FUNCTION_PREFERENCE_BANDWIDTH')]
             container['env'].append({'name': 'FUNCTION_OPERATION', 'value': 'DELETE'})
             job['spec']['activeDeadlineSeconds'] = 300

@@ -1,0 +1,10 @@
+function:
+  name: sqrt_numpy
+  runtime: python
+  source: sqrt_numpy.py
+  requirements: sqrt_numpy.requirements.txt
+
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium

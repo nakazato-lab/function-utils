@@ -37,6 +37,18 @@ def build_request():
         request['runtime'] = runtime
         # Do not include in ApplicationParameters.
         request['_code'] = code
+        try:
+            requirements = json.loads(os.getenv('FUNCTION_REQUIREMENTS', '[]'))
+        except json.JSONDecodeError as exc:
+            raise ValueError('FUNCTION_REQUIREMENTS must be a JSON array') from exc
+        if (not isinstance(requirements, list) or any(
+                not isinstance(requirement, str) or not requirement.strip()
+                or '\x00' in requirement or '\n' in requirement or '\r' in requirement
+                for requirement in requirements)):
+            raise ValueError('FUNCTION_REQUIREMENTS must be a list of nonempty single-line strings')
+        if runtime != 'python' and requirements:
+            raise ValueError('FUNCTION_REQUIREMENTS is supported only for python functions')
+        request['requirements'] = requirements
         preference = {key: os.getenv(f'FUNCTION_PREFERENCE_{key.upper()}', 'medium')
                       for key in ('cpu', 'memory', 'bandwidth')}
         for key, value in preference.items():
