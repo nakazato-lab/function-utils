@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -34,7 +35,7 @@ jobs:
 
   build-and-push-invoker:
     needs: changes
-    if: needs.changes.outputs.invoker == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.invoker == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +58,7 @@ jobs:
 
   build-and-push-registerer:
     needs: changes
-    if: needs.changes.outputs.registerer == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.registerer == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
