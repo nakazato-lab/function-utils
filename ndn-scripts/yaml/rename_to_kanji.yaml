@@ -1,9 +1,8 @@
+---
 function:
-  name: /capital/japan
+  name: rename_to_kanji
   runtime: python
-  source: |
-    print("Tokyo")
-
+  source: rename_to_kanji.py
 preference:
   cpu: medium
   memory: medium

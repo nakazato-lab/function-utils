@@ -1,0 +1,9 @@
+---
+function:
+  name: rename_city_to_kanji
+  runtime: python
+  source: rename_city_to_kanji.py
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium
