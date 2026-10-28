@@ -1,0 +1,2 @@
+let result = rename_city_to_kanji("Fukuoka")
+print result
