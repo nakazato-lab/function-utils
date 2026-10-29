@@ -1,0 +1,2 @@
+let result = sqrt_numpy(16)
+print result

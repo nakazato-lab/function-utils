@@ -1,0 +1,9 @@
+---
+function:
+  name: "/capital/japan"
+  runtime: python
+  source: capital_japan.py
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium

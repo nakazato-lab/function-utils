@@ -1,1 +1,2 @@
 python-ndn==0.4.2
+segmented-node-wrapper @ git+https://github.com/nakazato-lab/segmented-node-wrapper.git@034eb70d957638ce45a9bb883c9d35994197f93d

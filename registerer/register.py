@@ -4,16 +4,19 @@ import json
 import logging
 import os
 
-from ndn.app import NDNApp
 from ndn.encoding import Name
 from ndn.security import KeychainDigest
 from ndn.transport.stream_face import TcpFace
 from ndn.types import InterestNack, InterestTimeout
+from segmented_node_wrapper import SegmentedNodeWrapper
 
 from utils.nfd import wait_for_nfd
+from utils.ndn_routing import RoutedNDNApp
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+
+FUNCTION_UPLOAD_PREFIX = '/registerer/functions'
 
 
 def build_request():
@@ -32,7 +35,20 @@ def build_request():
         if not code.strip() or '\x00' in code:
             raise ValueError('FUNCTION_CODE must be nonempty text without NUL characters')
         request['runtime'] = runtime
-        request['content'] = code
+        # Do not include in ApplicationParameters.
+        request['_code'] = code
+        try:
+            requirements = json.loads(os.getenv('FUNCTION_REQUIREMENTS', '[]'))
+        except json.JSONDecodeError as exc:
+            raise ValueError('FUNCTION_REQUIREMENTS must be a JSON array') from exc
+        if (not isinstance(requirements, list) or any(
+                not isinstance(requirement, str) or not requirement.strip()
+                or '\x00' in requirement or '\n' in requirement or '\r' in requirement
+                for requirement in requirements)):
+            raise ValueError('FUNCTION_REQUIREMENTS must be a list of nonempty single-line strings')
+        if runtime != 'python' and requirements:
+            raise ValueError('FUNCTION_REQUIREMENTS is supported only for python functions')
+        request['requirements'] = requirements
         preference = {key: os.getenv(f'FUNCTION_PREFERENCE_{key.upper()}', 'medium')
                       for key in ('cpu', 'memory', 'bandwidth')}
         for key, value in preference.items():
@@ -46,14 +62,19 @@ async def main():
     operation, request = build_request()
     function_name = request['name']
     host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
-    app = NDNApp(face=TcpFace(host, port), keychain=KeychainDigest())
-    params = json.dumps(request, ensure_ascii=False).encode('utf-8')
+    app = RoutedNDNApp(face=TcpFace(host, port), keychain=KeychainDigest())
     register_name = (os.getenv('MANAGER_DELETE_NAME', '/Manager/delete')
                      if operation == 'DELETE' else
                      os.getenv('MANAGER_REGISTER_NAME', '/Manager/register'))
 
     async def register():
         try:
+            if operation == 'CREATE':
+                publisher = SegmentedNodeWrapper(app, FUNCTION_UPLOAD_PREFIX, serve=True)
+                await publisher.start()
+                request['code_ref'] = await publisher.publish(
+                    function_name, request.pop('_code').encode('utf-8'))
+            params = json.dumps(request, ensure_ascii=False).encode('utf-8')
             logging.info('Sending %s Interest: %s (ApplicationParameters=%s)',
                          operation, register_name, params.decode('utf-8'))
             _, _, content = await app.express_interest(

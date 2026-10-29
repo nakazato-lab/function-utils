@@ -1,12 +1,8 @@
+---
 function:
   name: ten_x
   runtime: python
-  source: |
-    import sys
-
-    arg0 = int(sys.argv[1])
-    print(arg0 * 10)
-
+  source: ten_x.py
 preference:
   cpu: medium
   memory: medium
