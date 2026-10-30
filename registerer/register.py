@@ -71,7 +71,6 @@ async def main():
         try:
             if operation == 'CREATE':
                 publisher = SegmentedNodeWrapper(app, FUNCTION_UPLOAD_PREFIX, serve=True)
-                await publisher.start()
                 request['code_ref'] = await publisher.publish(
                     function_name, request.pop('_code').encode('utf-8'))
             params = json.dumps(request, ensure_ascii=False).encode('utf-8')
