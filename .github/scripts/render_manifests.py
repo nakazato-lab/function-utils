@@ -154,7 +154,16 @@ def render(scripts, mode):
                       'metadata': {**metadata, 'annotations': {'argocd.argoproj.io/sync-wave': wave}},
                       'spec': {'backoffLimit': 2, 'activeDeadlineSeconds': 180 if mode == 'register' else 300,
                                'template': {'metadata': {'labels': {'app': f'function-{mode}'}},
-                                            'spec': {'restartPolicy': 'Never', 'initContainers': [nfd_address],
+                                            'spec': {'restartPolicy': 'Never',
+                                                     'topologySpreadConstraints': [{
+                                                         'maxSkew': 1,
+                                                         'topologyKey': 'kubernetes.io/hostname',
+                                                         'whenUnsatisfiable': 'ScheduleAnyway',
+                                                         'labelSelector': {
+                                                             'matchLabels': {'app': f'function-{mode}'},
+                                                         },
+                                                     }],
+                                                     'initContainers': [nfd_address],
                                                      'containers': [container],
                                                      'volumes': [
                                                          {'name': 'nfd-endpoint', 'emptyDir': {}}]}}}})
