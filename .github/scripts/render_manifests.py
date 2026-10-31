@@ -112,7 +112,10 @@ def render(scripts, mode):
         slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
         metadata = {'name': name, 'namespace': 'ndn'}
-        env = [{'name': 'NFD_CONFIG_PATH', 'value': '/etc/ndn-config/ADDRESS'}]
+        env = [
+            {'name': 'NFD_CONFIG_PATH', 'value': '/etc/ndn-config/ADDRESS'},
+            {'name': 'NFD_NAME_PATH', 'value': '/etc/ndn-config/ROUTER_NAME'},
+        ]
         # Kubernetes expands $(VAR) in env values; double dollars preserve code literally.
         source_value = code.replace('$', '$$')
         if mode == 'register':

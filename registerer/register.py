@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 
 from ndn.encoding import Name
 from ndn.security import KeychainDigest
@@ -17,6 +18,12 @@ from utils.ndn_routing import RoutedNDNApp
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 FUNCTION_UPLOAD_PREFIX = '/registerer/functions'
+
+
+def get_router_prefix():
+    path = os.getenv('NFD_NAME_PATH', '/etc/ndn-config/ROUTER_NAME')
+    router_name = Path(path).read_text(encoding='utf-8').strip()
+    return router_name
 
 
 def build_request():
@@ -61,6 +68,10 @@ def build_request():
 async def main():
     operation, request = build_request()
     function_name = request['name']
+    upload_prefix = None
+    if operation == 'CREATE':
+        router_name = get_router_prefix()
+        upload_prefix = f'/{router_name}{FUNCTION_UPLOAD_PREFIX}'
     host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
     app = RoutedNDNApp(face=TcpFace(host, port), keychain=KeychainDigest())
     register_name = (os.getenv('MANAGER_DELETE_NAME', '/Manager/delete')
@@ -70,9 +81,10 @@ async def main():
     async def register():
         try:
             if operation == 'CREATE':
-                publisher = SegmentedNodeWrapper(app, FUNCTION_UPLOAD_PREFIX, serve=True)
+                publisher = SegmentedNodeWrapper(app, serve=True)
                 request['code_ref'] = await publisher.publish(
-                    function_name, request.pop('_code').encode('utf-8'))
+                    f'{upload_prefix}/{function_name.lstrip("/")}',
+                    request.pop('_code').encode('utf-8'))
             params = json.dumps(request, ensure_ascii=False).encode('utf-8')
             logging.info('Sending %s Interest: %s (ApplicationParameters=%s)',
                          operation, register_name, params.decode('utf-8'))
