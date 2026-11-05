@@ -42,8 +42,12 @@ def build_request():
         if not code.strip() or '\x00' in code:
             raise ValueError('FUNCTION_CODE must be nonempty text without NUL characters')
         request['runtime'] = runtime
-        # Do not include in ApplicationParameters.
         request['_code'] = code
+        package_path = os.getenv('FUNCTION_PACKAGE_PATH')
+        if package_path:
+            # ZIP contents are replaced with a reference before sending ApplicationParameters.
+            request['zip_content'] = Path(package_path).read_bytes()
+            request['source'] = os.environ['FUNCTION_SOURCE']
         try:
             requirements = json.loads(os.getenv('FUNCTION_REQUIREMENTS', '[]'))
         except json.JSONDecodeError as exc:
@@ -85,6 +89,10 @@ async def main():
                 request['code_ref'] = await publisher.publish(
                     f'{upload_prefix}/{function_name.lstrip("/")}',
                     request.pop('_code').encode('utf-8'))
+                zip_content = request.pop('zip_content', None)
+                if zip_content is not None:
+                    request['zip_content'] = await publisher.publish(
+                        f'{upload_prefix}/{function_name.lstrip("/")}/package', zip_content)
             params = json.dumps(request, ensure_ascii=False).encode('utf-8')
             logging.info('Sending %s Interest: %s (ApplicationParameters=%s)',
                          operation, register_name, params.decode('utf-8'))

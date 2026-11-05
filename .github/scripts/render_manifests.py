@@ -1,10 +1,13 @@
 """Render script Jobs without accessing a cluster."""
 import argparse
+import base64
 import hashlib
+import io
 import json
 import yaml
 from pathlib import Path
 import re
+import zipfile
 
 
 class ManifestDumper(yaml.SafeDumper):
@@ -25,10 +28,10 @@ def load_function(path, source_dir):
     if not isinstance(data, dict) or set(data) - {'function', 'preference'}:
         raise ValueError(f'{path}: expected function and optional preference mappings')
     function = data.get('function')
-    allowed_function_keys = {'name', 'runtime', 'source', 'requirements'}
+    allowed_function_keys = {'name', 'runtime', 'source', 'requirements', 'files'}
     if (not isinstance(function, dict) or set(function) - allowed_function_keys
             or not {'name', 'runtime', 'source'} <= set(function)):
-        raise ValueError(f'{path}: function must contain name, runtime, source, and optional requirements')
+        raise ValueError(f'{path}: function must contain name, runtime, source, and optional requirements and files')
     name, runtime, source_file = function['name'], function['runtime'], function['source']
     name_component = r'[A-Za-z0-9_][A-Za-z0-9_.-]*'
     name_pattern = rf'(?:{name_component}|/(?:{name_component}/)*{name_component})'
@@ -47,6 +50,29 @@ def load_function(path, source_dir):
     source = source_path.read_text(encoding='utf-8')
     if not source.strip() or '\x00' in source:
         raise ValueError(f'{source_path}: source must be nonempty text without NUL characters')
+    files = function.get('files', [])
+    if not isinstance(files, list):
+        raise ValueError(f'{path}: function.files must be a list of relative file paths')
+    package = None
+    if files:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            names = set()
+            for filename in [source_file, *files]:
+                if (not isinstance(filename, str) or not filename or '\x00' in filename
+                        or Path(filename).is_absolute() or '..' in Path(filename).parts):
+                    raise ValueError(f'{path}: files must be relative paths within ndn-scripts/func')
+                file_path = source_dir / filename
+                if not file_path.resolve().is_relative_to(source_dir.resolve()) or not file_path.is_file():
+                    raise ValueError(f'{path}: file does not exist within ndn-scripts/func: {filename}')
+                archive_name = Path(filename).as_posix()
+                if archive_name in names:
+                    raise ValueError(f'{path}: duplicate file: {filename}')
+                names.add(archive_name)
+                info = zipfile.ZipInfo(archive_name)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, file_path.read_bytes())
+        package = base64.b64encode(buffer.getvalue()).decode('ascii')
     requirements_file = function.get('requirements')
     requirements = []
     if requirements_file is not None:
@@ -70,7 +96,7 @@ def load_function(path, source_dir):
     for key, value in preference.items():
         if not isinstance(value, str) or value not in ('high', 'medium', 'low'):
             raise ValueError(f'{path}: preference.{key} must be high, medium, or low')
-    return name, runtime, source, requirements, preference
+    return name, runtime, source, requirements, preference, package, source_file
 
 
 def render(scripts, mode):
@@ -90,12 +116,14 @@ def render(scripts, mode):
     names = set()
     for path in paths:
         if mode == 'register':
-            function_name, runtime, code, requirements, preference = load_function(path, scripts / 'func')
+            function_name, runtime, code, requirements, preference, package, source_file = load_function(path, scripts / 'func')
             if function_name in names:
                 raise ValueError(f'Duplicate function.name: {function_name}')
             names.add(function_name)
             # A preference-only edit must also create a new immutable Job.
             identity = json.dumps([function_name, runtime, code, requirements, preference], sort_keys=True)
+            if package:
+                identity += package
             slug_source = function_name
             version = 'function-yaml-v1'
         else:
@@ -123,6 +151,13 @@ def render(scripts, mode):
                 {'name': 'FUNCTION_NAME', 'value': function_name},
                 {'name': 'FUNCTION_RUNTIME', 'value': runtime},
                 {'name': 'FUNCTION_CODE', 'value': source_value},
+            ])
+            if package:
+                env.extend([
+                    {'name': 'FUNCTION_PACKAGE_PATH', 'value': '/app/package/function.zip'},
+                    {'name': 'FUNCTION_SOURCE', 'value': source_file},
+                ])
+            env.extend([
                 {'name': 'FUNCTION_REQUIREMENTS', 'value': json.dumps(requirements).replace('$', '$$')},
                 {'name': 'FUNCTION_PREFERENCE_CPU', 'value': preference['cpu']},
                 {'name': 'FUNCTION_PREFERENCE_MEMORY', 'value': preference['memory']},
@@ -142,6 +177,16 @@ def render(scripts, mode):
             'volumeMounts': [
                 {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config', 'readOnly': True}],
         }
+        volumes = [{'name': 'nfd-endpoint', 'emptyDir': {}}]
+        if mode == 'register' and package:
+            package_name = name + '-package'
+            items.append({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                          'metadata': {**metadata, 'name': package_name},
+                          'immutable': True,
+                          'binaryData': {'function.zip': package}})
+            volumes.append({'name': 'script', 'configMap': {'name': package_name}})
+            container['volumeMounts'].append(
+                {'name': 'script', 'mountPath': '/app/package', 'readOnly': True})
         nfd_address = {
             'name': 'nfd-address',
             'image': 'ghcr.io/nakazato-lab/ndn-dhcp/ndn-dhcp-client:latest',
@@ -168,8 +213,7 @@ def render(scripts, mode):
                                                      }],
                                                      'initContainers': [nfd_address],
                                                      'containers': [container],
-                                                     'volumes': [
-                                                         {'name': 'nfd-endpoint', 'emptyDir': {}}]}}}})
+                                                     'volumes': volumes}}}})
     return items
 
 
@@ -195,7 +239,8 @@ def deletion_jobs(previous, current):
             old_name = job['metadata']['name']
             job['metadata']['name'] = old_name.replace('function-register-', 'function-delete-', 1)
             container['env'] = [item for item in container['env'] if item['name'] not in (
-                'FUNCTION_CODE', 'FUNCTION_REQUIREMENTS', 'FUNCTION_PREFERENCE_CPU',
+                'FUNCTION_CODE', 'FUNCTION_PACKAGE_PATH', 'FUNCTION_SOURCE',
+                'FUNCTION_REQUIREMENTS', 'FUNCTION_PREFERENCE_CPU',
                 'FUNCTION_PREFERENCE_MEMORY', 'FUNCTION_PREFERENCE_BANDWIDTH')]
             container['env'].append({'name': 'FUNCTION_OPERATION', 'value': 'DELETE'})
             job['spec']['activeDeadlineSeconds'] = 300
