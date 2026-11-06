@@ -90,9 +90,9 @@ def render(scripts, mode):
         paths = sorted(p for p in (scripts / folder).rglob('*')
                        if p.is_file() and p.suffix in ('.yaml', '.yml'))
         if paths:
-            commit_sha = subprocess.check_output(
-                ['git', '-C', str(scripts), 'log', '-1', '--format=%H', '--', 'func', 'yaml'],
-                text=True).strip()[:12]
+            source_commit = subprocess.check_output(
+                ['git', '-C', str(scripts), 'rev-parse', 'HEAD'],
+                text=True).strip()
     else:
         paths = sorted((scripts / folder).rglob('*.ndn'))
     names = set()
@@ -102,8 +102,14 @@ def render(scripts, mode):
             if function_name in names:
                 raise ValueError(f'Duplicate function.name: {function_name}')
             names.add(function_name)
+            identity = json.dumps([function_name, runtime, code, requirements, preference], sort_keys=True)
+            if files:
+                identity += json.dumps([source_file, [
+                    [filename, hashlib.sha256((scripts / 'func' / filename).read_bytes()).hexdigest()]
+                    for filename in files
+                ]])
             slug_source = function_name
-            digest = commit_sha
+            version = 'function-yaml-v1'
         else:
             if not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
                 raise ValueError(f'Unsupported script filename: {path.name}')
@@ -114,7 +120,7 @@ def render(scripts, mode):
             identity = relative + '\0' + code
             slug_source = path.stem
             version = 'nlsr-service-v1'
-            digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
+        digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
         slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
         metadata = {'name': name, 'namespace': 'ndn'}
@@ -180,8 +186,10 @@ def render(scripts, mode):
                 'command': ['python', '-c', (
                     "import subprocess, zipfile\n"
                     "from pathlib import Path\n"
-                    "subprocess.run(['git', 'clone', '--depth', '1', '--branch', 'main', "
-                    "'https://github.com/nakazato-lab/function-utils.git', '/app/package/repository'], check=True)\n"
+                    "subprocess.run(['git', 'init', '/app/package/repository'], check=True)\n"
+                    "subprocess.run(['git', '-C', '/app/package/repository', 'fetch', '--depth', '1', "
+                    f"'https://github.com/nakazato-lab/function-utils.git', '{source_commit}'], check=True)\n"
+                    "subprocess.run(['git', '-C', '/app/package/repository', 'checkout', '--detach', 'FETCH_HEAD'], check=True)\n"
                     "root = Path('/app/package/repository/ndn-scripts/func')\n"
                     "with zipfile.ZipFile('/app/package/function.zip', 'w', compression=zipfile.ZIP_DEFLATED) as archive:\n"
                     f"    for filename in {[source_file, *files]!r}:\n"
