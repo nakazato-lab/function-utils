@@ -1,12 +1,11 @@
 """Render script Jobs without accessing a cluster."""
 import argparse
 import hashlib
-import io
 import json
 import yaml
 from pathlib import Path
 import re
-import zipfile
+import subprocess
 
 
 class ManifestDumper(yaml.SafeDumper):
@@ -52,23 +51,6 @@ def load_function(path, source_dir):
     files = function.get('files', [])
     if not isinstance(files, list):
         raise ValueError(f'{path}: function.files must be a list of relative file paths')
-    package = None
-    if files:
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, 'w') as archive:
-            names = set()
-            for filename in [source_file, *files]:
-                file_path = source_dir / filename
-                if not file_path.resolve().is_relative_to(source_dir.resolve()) or not file_path.is_file():
-                    raise ValueError(f'{path}: file does not exist within ndn-scripts/func: {filename}')
-                if filename in names:
-                    raise ValueError(f'{path}: duplicate file: {filename}')
-                names.add(filename)
-                info = zipfile.ZipInfo(filename)
-                info.compress_type = zipfile.ZIP_DEFLATED
-                # Add the file's contents to the ZIP.
-                archive.writestr(info, file_path.read_bytes())
-        package = hashlib.sha256(buffer.getvalue()).hexdigest()
     requirements_file = function.get('requirements')
     requirements = []
     if requirements_file is not None:
@@ -92,7 +74,7 @@ def load_function(path, source_dir):
     for key, value in preference.items():
         if not isinstance(value, str) or value not in ('high', 'medium', 'low'):
             raise ValueError(f'{path}: preference.{key} must be high, medium, or low')
-    return name, runtime, source, requirements, preference, package, source_file, files
+    return name, runtime, source, requirements, preference, source_file, files
 
 
 def render(scripts, mode):
@@ -107,21 +89,21 @@ def render(scripts, mode):
             raise ValueError('Registration definitions must be YAML files')
         paths = sorted(p for p in (scripts / folder).rglob('*')
                        if p.is_file() and p.suffix in ('.yaml', '.yml'))
+        if paths:
+            commit_sha = subprocess.check_output(
+                ['git', '-C', str(scripts), 'log', '-1', '--format=%H', '--', 'func', 'yaml'],
+                text=True).strip()[:12]
     else:
         paths = sorted((scripts / folder).rglob('*.ndn'))
     names = set()
     for path in paths:
         if mode == 'register':
-            function_name, runtime, code, requirements, preference, package, source_file, files = load_function(path, scripts / 'func')
+            function_name, runtime, code, requirements, preference, source_file, files = load_function(path, scripts / 'func')
             if function_name in names:
                 raise ValueError(f'Duplicate function.name: {function_name}')
             names.add(function_name)
-            # A preference-only edit must also create a new immutable Job.
-            identity = json.dumps([function_name, runtime, code, requirements, preference], sort_keys=True)
-            if package:
-                identity += package
             slug_source = function_name
-            version = 'function-yaml-v1'
+            digest = commit_sha
         else:
             if not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
                 raise ValueError(f'Unsupported script filename: {path.name}')
@@ -132,7 +114,7 @@ def render(scripts, mode):
             identity = relative + '\0' + code
             slug_source = path.stem
             version = 'nlsr-service-v1'
-        digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
+            digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
         slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
         metadata = {'name': name, 'namespace': 'ndn'}
@@ -148,7 +130,7 @@ def render(scripts, mode):
                 {'name': 'FUNCTION_RUNTIME', 'value': runtime},
                 {'name': 'FUNCTION_CODE', 'value': source_value},
             ])
-            if package:
+            if files:
                 env.extend([
                     {'name': 'FUNCTION_PACKAGE_PATH', 'value': '/app/package/function.zip'},
                     {'name': 'FUNCTION_SOURCE', 'value': source_file},
@@ -174,7 +156,7 @@ def render(scripts, mode):
                 {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config', 'readOnly': True}],
         }
         volumes = [{'name': 'nfd-endpoint', 'emptyDir': {}}]
-        if mode == 'register' and package:
+        if mode == 'register' and files:
             volumes.append({'name': 'script', 'emptyDir': {}})
             container['volumeMounts'].append(
                 {'name': 'script', 'mountPath': '/app/package', 'readOnly': True})
@@ -190,7 +172,7 @@ def render(scripts, mode):
                 {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config'}],
         }
         init_containers = [nfd_address]
-        if mode == 'register' and package:
+        if mode == 'register' and files:
             init_containers.append({
                 'name': 'fetch-function-files',
                 'image': container['image'],
