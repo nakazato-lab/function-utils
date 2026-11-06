@@ -1,0 +1,11 @@
+function:
+  name: print_image
+  runtime: ndn
+  source: print_image.ndn
+  files:
+    - sample.png
+
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium
