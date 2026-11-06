@@ -1,2 +1,2 @@
-ndnc==0.0.9
+ndnc==0.0.10
 python-ndn==0.4.2
