@@ -59,18 +59,15 @@ def load_function(path, source_dir):
         with zipfile.ZipFile(buffer, 'w') as archive:
             names = set()
             for filename in [source_file, *files]:
-                if (not isinstance(filename, str) or not filename or '\x00' in filename
-                        or Path(filename).is_absolute() or '..' in Path(filename).parts):
-                    raise ValueError(f'{path}: files must be relative paths within ndn-scripts/func')
                 file_path = source_dir / filename
                 if not file_path.resolve().is_relative_to(source_dir.resolve()) or not file_path.is_file():
                     raise ValueError(f'{path}: file does not exist within ndn-scripts/func: {filename}')
-                archive_name = Path(filename).as_posix()
-                if archive_name in names:
+                if filename in names:
                     raise ValueError(f'{path}: duplicate file: {filename}')
-                names.add(archive_name)
-                info = zipfile.ZipInfo(archive_name)
+                names.add(filename)
+                info = zipfile.ZipInfo(filename)
                 info.compress_type = zipfile.ZIP_DEFLATED
+                # Add the file's contents to the ZIP.
                 archive.writestr(info, file_path.read_bytes())
         package = base64.b64encode(buffer.getvalue()).decode('ascii')
     requirements_file = function.get('requirements')

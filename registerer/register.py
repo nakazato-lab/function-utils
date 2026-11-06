@@ -45,7 +45,7 @@ def build_request():
         request['_code'] = code
         package_path = os.getenv('FUNCTION_PACKAGE_PATH')
         if package_path:
-            # ZIP contents are replaced with a reference before sending ApplicationParameters.
+            # Store the ZIP file's bytes.
             request['zip_content'] = Path(package_path).read_bytes()
             request['source'] = os.environ['FUNCTION_SOURCE']
         try:
@@ -91,6 +91,7 @@ async def main():
                     request.pop('_code').encode('utf-8'))
                 zip_content = request.pop('zip_content', None)
                 if zip_content is not None:
+                    # request['zip_content'] now holds a reference to the published ZIP.
                     request['zip_content'] = await publisher.publish(
                         f'{upload_prefix}/{function_name.lstrip("/")}/package', zip_content)
             params = json.dumps(request, ensure_ascii=False).encode('utf-8')
