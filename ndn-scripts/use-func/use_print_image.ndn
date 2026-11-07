@@ -1,2 +1,2 @@
 let image = interest "/print_image"
-print image
+return image
