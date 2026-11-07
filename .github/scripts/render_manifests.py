@@ -119,7 +119,7 @@ def render(scripts, mode):
             relative = path.relative_to(scripts).as_posix()
             identity = relative + '\0' + code
             slug_source = path.stem
-            version = 'nlsr-service-v1'
+            version = 'nlsr-service-v2'
         digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
         slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
@@ -152,6 +152,7 @@ def render(scripts, mode):
             env.extend([
                 {'name': 'NDN_SCRIPT_NAME', 'value': path.name},
                 {'name': 'NDN_SCRIPT_SOURCE', 'value': source_value},
+                {'name': 'NDN_OUTPUT_DIR', 'value': '/output'},
             ])
         container = {
             'name': image,
@@ -162,6 +163,9 @@ def render(scripts, mode):
                 {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config', 'readOnly': True}],
         }
         volumes = [{'name': 'nfd-endpoint', 'emptyDir': {}}]
+        if mode == 'invoke':
+            volumes.append({'name': 'output', 'persistentVolumeClaim': {'claimName': 'function-invoke-output'}})
+            container['volumeMounts'].append({'name': 'output', 'mountPath': '/output'})
         if mode == 'register' and files:
             volumes.append({'name': 'script', 'emptyDir': {}})
             container['volumeMounts'].append(
@@ -216,6 +220,14 @@ def render(scripts, mode):
                                                      'initContainers': init_containers,
                                                      'containers': [container],
                                                      'volumes': volumes}}}})
+    if mode == 'invoke' and items:
+        items.insert(0, {
+            'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
+            'metadata': {'name': 'function-invoke-output', 'namespace': 'ndn',
+                         'annotations': {'argocd.argoproj.io/sync-wave': '0'}},
+            'spec': {'storageClassName': 'longhorn', 'accessModes': ['ReadWriteMany'],
+                     'resources': {'requests': {'storage': '1Gi'}}},
+        })
     return items
 
 
