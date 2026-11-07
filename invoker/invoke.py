@@ -31,11 +31,15 @@ async def run_script(script_path):
     environment = os.environ.copy()
     environment['NDN_CLIENT_TRANSPORT'] = f'tcp4://{host}:{port}'
     result_path = script_path.with_suffix('.json')
+    output_dir = os.getenv('NDN_OUTPUT_DIR')
+    command = ['ndnc', 'run', str(script_path)]
+    if output_dir:
+        command.extend(['--result-file', str(result_path)])
     deadline = asyncio.get_running_loop().time() + 180
     while asyncio.get_running_loop().time() < deadline:
         logging.info('Running NDN script: %s', script_path)
         process = await asyncio.create_subprocess_exec(
-            'ndnc', 'run', str(script_path), '--result-file', str(result_path),
+            *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=environment,
@@ -45,12 +49,13 @@ async def run_script(script_path):
             if stderr:
                 logging.info('ndnc stderr: %s', stderr.decode('utf-8', errors='replace').strip())
             print(stdout.decode('utf-8'), end='', flush=True)
-            result = json.loads(result_path.read_text(encoding='utf-8'))
-            if isinstance(result, dict) and result.get('encoding') == 'base64':
-                output = Path(os.environ['NDN_OUTPUT_DIR']) / f'{script_path.stem}.bin'
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_bytes(base64.b64decode(result['data']))
-                logging.info('Saved result to %s', output)
+            if output_dir:
+                result = json.loads(result_path.read_text(encoding='utf-8'))
+                if isinstance(result, dict) and result.get('encoding') == 'base64':
+                    output = Path(output_dir) / f'{script_path.stem}.bin'
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(base64.b64decode(result['data']))
+                    logging.info('Saved result to %s', output)
             return
         logging.info('Function route/response not ready: %s',
                      stderr.decode('utf-8', errors='replace').strip())

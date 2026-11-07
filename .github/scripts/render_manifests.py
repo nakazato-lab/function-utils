@@ -97,6 +97,7 @@ def render(scripts, mode):
         paths = sorted((scripts / folder).rglob('*.ndn'))
     names = set()
     for path in paths:
+        save_output = mode == 'invoke' and 'image' in path.name
         if mode == 'register':
             function_name, runtime, code, requirements, preference, source_file, files = load_function(path, scripts / 'func')
             if function_name in names:
@@ -119,7 +120,7 @@ def render(scripts, mode):
             relative = path.relative_to(scripts).as_posix()
             identity = relative + '\0' + code
             slug_source = path.stem
-            version = 'nlsr-service-v2'
+            version = 'nlsr-service-v3' if save_output else 'nlsr-service-v1'
         digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
         slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
@@ -152,8 +153,9 @@ def render(scripts, mode):
             env.extend([
                 {'name': 'NDN_SCRIPT_NAME', 'value': path.name},
                 {'name': 'NDN_SCRIPT_SOURCE', 'value': source_value},
-                {'name': 'NDN_OUTPUT_DIR', 'value': '/output'},
             ])
+            if save_output:
+                env.append({'name': 'NDN_OUTPUT_DIR', 'value': '/output'})
         container = {
             'name': image,
             'image': f'ghcr.io/nakazato-lab/function-utils/ndn-function-{image}:latest',
@@ -163,7 +165,7 @@ def render(scripts, mode):
                 {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config', 'readOnly': True}],
         }
         volumes = [{'name': 'nfd-endpoint', 'emptyDir': {}}]
-        if mode == 'invoke':
+        if save_output:
             volumes.append({'name': 'output', 'persistentVolumeClaim': {'claimName': 'function-invoke-output'}})
             container['volumeMounts'].append({'name': 'output', 'mountPath': '/output'})
         if mode == 'register' and files:
@@ -220,12 +222,12 @@ def render(scripts, mode):
                                                      'initContainers': init_containers,
                                                      'containers': [container],
                                                      'volumes': volumes}}}})
-    if mode == 'invoke' and items:
+    if mode == 'invoke' and any('image' in path.name for path in paths):
         items.insert(0, {
             'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
             'metadata': {'name': 'function-invoke-output', 'namespace': 'ndn',
                          'annotations': {'argocd.argoproj.io/sync-wave': '0'}},
-            'spec': {'storageClassName': 'longhorn', 'accessModes': ['ReadWriteMany'],
+            'spec': {'storageClassName': 'longhorn', 'accessModes': ['ReadWriteOnce'],
                      'resources': {'requests': {'storage': '1Gi'}}},
         })
     return items
