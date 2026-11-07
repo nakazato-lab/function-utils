@@ -1,2 +1,3 @@
-let image = compress_image("/print_image")
-return image
+let image = interest "/print_image"
+let compressed = compress_image(image)
+return compressed
