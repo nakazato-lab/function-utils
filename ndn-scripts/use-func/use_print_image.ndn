@@ -1,0 +1,2 @@
+let image = interest "/print_image"
+return image

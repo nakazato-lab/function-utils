@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: image-export
+  namespace: ndn
+spec:
+  restartPolicy: Never
+  # Use the same node as the Invoker when mounting the RWO volume concurrently.
+  nodeSelector:
+    kubernetes.io/hostname: kube5
+  containers:
+    - name: export
+      image: busybox:1.37
+      command: ["sh", "-c", "sleep 86400"]
+      volumeMounts:
+        - name: output
+          mountPath: /output
+          readOnly: true
+  volumes:
+    - name: output
+      persistentVolumeClaim:
+        claimName: function-invoke-output
+        readOnly: true
