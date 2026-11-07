@@ -1,0 +1,10 @@
+function:
+  name: compress_image
+  runtime: python
+  source: compress_image.py
+  requirements: compress_image.requirements.txt
+
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium
