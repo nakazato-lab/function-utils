@@ -1,0 +1,2 @@
+let image = compress_image("/print_image")
+return image
