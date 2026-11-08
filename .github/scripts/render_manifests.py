@@ -5,6 +5,7 @@ import json
 import yaml
 from pathlib import Path
 import re
+import subprocess
 
 
 class ManifestDumper(yaml.SafeDumper):
@@ -25,10 +26,10 @@ def load_function(path, source_dir):
     if not isinstance(data, dict) or set(data) - {'function', 'preference'}:
         raise ValueError(f'{path}: expected function and optional preference mappings')
     function = data.get('function')
-    allowed_function_keys = {'name', 'runtime', 'source', 'requirements'}
+    allowed_function_keys = {'name', 'runtime', 'source', 'requirements', 'files'}
     if (not isinstance(function, dict) or set(function) - allowed_function_keys
             or not {'name', 'runtime', 'source'} <= set(function)):
-        raise ValueError(f'{path}: function must contain name, runtime, source, and optional requirements')
+        raise ValueError(f'{path}: function must contain name, runtime, source, and optional requirements and files')
     name, runtime, source_file = function['name'], function['runtime'], function['source']
     name_component = r'[A-Za-z0-9_][A-Za-z0-9_.-]*'
     name_pattern = rf'(?:{name_component}|/(?:{name_component}/)*{name_component})'
@@ -47,6 +48,9 @@ def load_function(path, source_dir):
     source = source_path.read_text(encoding='utf-8')
     if not source.strip() or '\x00' in source:
         raise ValueError(f'{source_path}: source must be nonempty text without NUL characters')
+    files = function.get('files', [])
+    if not isinstance(files, list):
+        raise ValueError(f'{path}: function.files must be a list of relative file paths')
     requirements_file = function.get('requirements')
     requirements = []
     if requirements_file is not None:
@@ -70,7 +74,7 @@ def load_function(path, source_dir):
     for key, value in preference.items():
         if not isinstance(value, str) or value not in ('high', 'medium', 'low'):
             raise ValueError(f'{path}: preference.{key} must be high, medium, or low')
-    return name, runtime, source, requirements, preference
+    return name, runtime, source, requirements, preference, source_file, files
 
 
 def render(scripts, mode):
@@ -85,17 +89,25 @@ def render(scripts, mode):
             raise ValueError('Registration definitions must be YAML files')
         paths = sorted(p for p in (scripts / folder).rglob('*')
                        if p.is_file() and p.suffix in ('.yaml', '.yml'))
+        if paths:
+            source_commit = subprocess.check_output(
+                ['git', '-C', str(scripts), 'rev-parse', 'HEAD'],
+                text=True).strip()
     else:
         paths = sorted((scripts / folder).rglob('*.ndn'))
     names = set()
     for path in paths:
         if mode == 'register':
-            function_name, runtime, code, requirements, preference = load_function(path, scripts / 'func')
+            function_name, runtime, code, requirements, preference, source_file, files = load_function(path, scripts / 'func')
             if function_name in names:
                 raise ValueError(f'Duplicate function.name: {function_name}')
             names.add(function_name)
-            # A preference-only edit must also create a new immutable Job.
             identity = json.dumps([function_name, runtime, code, requirements, preference], sort_keys=True)
+            if files:
+                identity += json.dumps([source_file, [
+                    [filename, hashlib.sha256((scripts / 'func' / filename).read_bytes()).hexdigest()]
+                    for filename in files
+                ]])
             slug_source = function_name
             version = 'function-yaml-v1'
         else:
@@ -123,6 +135,13 @@ def render(scripts, mode):
                 {'name': 'FUNCTION_NAME', 'value': function_name},
                 {'name': 'FUNCTION_RUNTIME', 'value': runtime},
                 {'name': 'FUNCTION_CODE', 'value': source_value},
+            ])
+            if files:
+                env.extend([
+                    {'name': 'FUNCTION_PACKAGE_PATH', 'value': '/app/package/function.zip'},
+                    {'name': 'FUNCTION_SOURCE', 'value': source_file},
+                ])
+            env.extend([
                 {'name': 'FUNCTION_REQUIREMENTS', 'value': json.dumps(requirements).replace('$', '$$')},
                 {'name': 'FUNCTION_PREFERENCE_CPU', 'value': preference['cpu']},
                 {'name': 'FUNCTION_PREFERENCE_MEMORY', 'value': preference['memory']},
@@ -142,6 +161,11 @@ def render(scripts, mode):
             'volumeMounts': [
                 {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config', 'readOnly': True}],
         }
+        volumes = [{'name': 'nfd-endpoint', 'emptyDir': {}}]
+        if mode == 'register' and files:
+            volumes.append({'name': 'script', 'emptyDir': {}})
+            container['volumeMounts'].append(
+                {'name': 'script', 'mountPath': '/app/package', 'readOnly': True})
         nfd_address = {
             'name': 'nfd-address',
             'image': 'ghcr.io/nakazato-lab/ndn-dhcp/ndn-dhcp-client:latest',
@@ -153,6 +177,29 @@ def render(scripts, mode):
             'volumeMounts': [
                 {'name': 'nfd-endpoint', 'mountPath': '/etc/ndn-config'}],
         }
+        init_containers = [nfd_address]
+        if mode == 'register' and files:
+            init_containers.append({
+                'name': 'fetch-function-files',
+                'image': container['image'],
+                'imagePullPolicy': 'Always',
+                'command': ['python', '-c', (
+                    "import subprocess, zipfile\n"
+                    "from pathlib import Path\n"
+                    "subprocess.run(['git', 'init', '/app/package/repository'], check=True)\n"
+                    "subprocess.run(['git', '-C', '/app/package/repository', 'fetch', '--depth', '1', "
+                    f"'https://github.com/nakazato-lab/function-utils.git', '{source_commit}'], check=True)\n"
+                    "subprocess.run(['git', '-C', '/app/package/repository', 'checkout', '--detach', 'FETCH_HEAD'], check=True)\n"
+                    "root = Path('/app/package/repository/ndn-scripts/func')\n"
+                    "with zipfile.ZipFile('/app/package/function.zip', 'w', compression=zipfile.ZIP_DEFLATED) as archive:\n"
+                    f"    for filename in {[source_file, *files]!r}:\n"
+                    "        file_path = root / filename\n"
+                    "        if not file_path.resolve().is_relative_to(root):\n"
+                    "            raise ValueError('Function files must stay within ndn-scripts/func')\n"
+                    "        archive.write(file_path, arcname=filename)\n"
+                ).replace('$', '$$')],
+                'volumeMounts': [{'name': 'script', 'mountPath': '/app/package'}],
+            })
         items.append({'apiVersion': 'batch/v1', 'kind': 'Job',
                       'metadata': {**metadata, 'annotations': {'argocd.argoproj.io/sync-wave': wave}},
                       'spec': {'backoffLimit': 2, 'activeDeadlineSeconds': 180 if mode == 'register' else 300,
@@ -166,10 +213,9 @@ def render(scripts, mode):
                                                              'matchLabels': {'app': f'function-{mode}'},
                                                          },
                                                      }],
-                                                     'initContainers': [nfd_address],
+                                                     'initContainers': init_containers,
                                                      'containers': [container],
-                                                     'volumes': [
-                                                         {'name': 'nfd-endpoint', 'emptyDir': {}}]}}}})
+                                                     'volumes': volumes}}}})
     return items
 
 
@@ -195,11 +241,13 @@ def deletion_jobs(previous, current):
             old_name = job['metadata']['name']
             job['metadata']['name'] = old_name.replace('function-register-', 'function-delete-', 1)
             container['env'] = [item for item in container['env'] if item['name'] not in (
-                'FUNCTION_CODE', 'FUNCTION_REQUIREMENTS', 'FUNCTION_PREFERENCE_CPU',
+                'FUNCTION_CODE', 'FUNCTION_PACKAGE_PATH', 'FUNCTION_SOURCE',
+                'FUNCTION_REQUIREMENTS', 'FUNCTION_PREFERENCE_CPU',
                 'FUNCTION_PREFERENCE_MEMORY', 'FUNCTION_PREFERENCE_BANDWIDTH')]
             container['env'].append({'name': 'FUNCTION_OPERATION', 'value': 'DELETE'})
             job['spec']['activeDeadlineSeconds'] = 300
-            # DELETE needs only the function name, not the old source ConfigMap.
+            spec['initContainers'] = [item for item in spec['initContainers']
+                                      if item['name'] != 'fetch-function-files']
             container['volumeMounts'] = [v for v in container['volumeMounts'] if v['name'] != 'script']
             spec['volumes'] = [v for v in spec['volumes'] if v['name'] != 'script']
         result.append(job)

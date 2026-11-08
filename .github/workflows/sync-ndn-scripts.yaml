@@ -26,6 +26,7 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
           path: function-utils
+          fetch-depth: 0
       - uses: actions/checkout@v4
         with:
           repository: nakazato-lab/k8s-manifest
