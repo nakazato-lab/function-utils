@@ -30,6 +30,11 @@ async def run_script(script_path):
     host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
     environment = os.environ.copy()
     environment['NDN_CLIENT_TRANSPORT'] = f'tcp4://{host}:{port}'
+    # The DHCP initContainer writes ROUTER_NAME to the shared volume mounted at /etc/ndn-config.
+    # The Job sets NFD_NAME_PATH to /etc/ndn-config/ROUTER_NAME.
+    # The Invoker reads it to pass the connected router's prefix to ndnc.
+    router_name = Path(os.getenv('NFD_NAME_PATH', '/etc/ndn-config/ROUTER_NAME')).read_text(encoding='utf-8').strip()
+    environment['NDN_ROUTER_PREFIX'] = '/' + router_name.strip('/')
     result_path = script_path.with_suffix('.json')
     output_dir = os.getenv('NDN_OUTPUT_DIR')
     command = ['ndnc', 'run', str(script_path)]
