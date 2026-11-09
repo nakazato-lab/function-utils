@@ -120,7 +120,7 @@ def render(scripts, mode):
             relative = path.relative_to(scripts).as_posix()
             identity = relative + '\0' + code
             slug_source = path.stem
-            version = 'nlsr-service-v3' if save_output else 'nlsr-service-v1'
+            version = 'tracing-v1'
         digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
         slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
         name = f'function-{mode}-{slug}-{digest}'
@@ -153,6 +153,8 @@ def render(scripts, mode):
             env.extend([
                 {'name': 'NDN_SCRIPT_NAME', 'value': path.name},
                 {'name': 'NDN_SCRIPT_SOURCE', 'value': source_value},
+                {'name': 'OTEL_SERVICE_NAME', 'value': 'invoker'},
+                {'name': 'OTEL_EXPORTER_OTLP_ENDPOINT', 'value': 'http://jaeger.jaeger.svc.cluster.local:4318'},
             ])
             if save_output:
                 env.append({'name': 'NDN_OUTPUT_DIR', 'value': '/output'})
