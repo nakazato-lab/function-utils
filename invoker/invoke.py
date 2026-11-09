@@ -1,7 +1,5 @@
-"""Run .ndn source provided by the Job through ndnc."""
+"""Run .ndn source in the Invoker process and save binary results."""
 import asyncio
-import base64
-import json
 import logging
 import os
 import tempfile
@@ -12,9 +10,9 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from utils.nfd import wait_for_nfd
+from utils.ndn_runtime import execute_script
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -41,61 +39,37 @@ async def main():
 async def run_script(script_path):
     with tracer.start_as_current_span('invoker.wait_for_nfd'):
         host, port = await wait_for_nfd(os.environ['NFD_CONFIG_PATH'])
-    environment = os.environ.copy()
-    environment['NDN_CLIENT_TRANSPORT'] = f'tcp4://{host}:{port}'
+    os.environ['NDN_CLIENT_TRANSPORT'] = f'tcp4://{host}:{port}'
     # The DHCP initContainer writes ROUTER_NAME to the shared volume mounted at /etc/ndn-config.
     # The Job sets NFD_NAME_PATH to /etc/ndn-config/ROUTER_NAME.
     # The Invoker reads it to pass the connected router's prefix to ndnc.
     router_name = Path(os.getenv('NFD_NAME_PATH', '/etc/ndn-config/ROUTER_NAME')).read_text(encoding='utf-8').strip()
-    environment['NDN_ROUTER_PREFIX'] = '/' + router_name.strip('/')
-    environment['OTEL_SERVICE_NAME'] = 'ndn-interpreter'
-    result_path = script_path.with_suffix('.json')
+    os.environ['NDN_ROUTER_PREFIX'] = '/' + router_name.strip('/')
     output_dir = os.getenv('NDN_OUTPUT_DIR')
-    command = ['ndnc', 'run', str(script_path)]
-    if output_dir:
-        command.extend(['--result-file', str(result_path)])
+    source = script_path.read_text(encoding='utf-8')
     deadline = asyncio.get_running_loop().time() + 180
     attempt = 0
     while asyncio.get_running_loop().time() < deadline:
         attempt += 1
         logging.info('Running NDN script: %s', script_path)
-        with tracer.start_as_current_span('invoker.ndnc', attributes={'retry.attempt': attempt}) as span:
-            # Carry the active span to the ndnc subprocess through environment variables.
-            carrier = {}
-            # Write the current span's context into carrier, e.g. {'traceparent': '00-<Trace ID>-<Span ID>-01'}.
-            TraceContextTextMapPropagator().inject(carrier)
-            # Add it to the subprocess environment as TRACEPARENT.
-            environment.update({key.upper(): value for key, value in carrier.items()})
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=environment,
-            )
-            stdout, stderr = await process.communicate()
-            span.set_attribute('process.exit.code', process.returncode)
-            if process.returncode != 0:
-                span.set_status(trace.Status(trace.StatusCode.ERROR, 'ndnc execution failed'))
-        if process.returncode == 0:
-            if stderr:
-                logging.info('ndnc stderr: %s', stderr.decode('utf-8', errors='replace').strip())
-            print(stdout.decode('utf-8'), end='', flush=True)
-            if output_dir:
-                with tracer.start_as_current_span('invoker.save_result') as span:
-                    result = json.loads(result_path.read_text(encoding='utf-8'))
-                    if isinstance(result, dict) and result.get('encoding') == 'base64':
-                        output = Path(output_dir) / f'{script_path.stem}.bin'
-                        output.parent.mkdir(parents=True, exist_ok=True)
-                        data = base64.b64decode(result['data'])
-                        output.write_bytes(data)
-                        span.set_attribute('file.path', str(output))
-                        span.set_attribute('file.size', len(data))
-                        logging.info('Saved result to %s', output)
-            return
-        logging.info('Function route/response not ready: %s',
-                     stderr.decode('utf-8', errors='replace').strip())
-        await asyncio.sleep(2)
-    raise RuntimeError('ndnc run did not complete within 180 seconds')
+        try:
+            # The Interpreter inherits the active span in this process.
+            with tracer.start_as_current_span('invoker.execution', attributes={'retry.attempt': attempt}):
+                result = await execute_script(source, script_path.parent)
+        except Exception as exc:
+            logging.info('Function route/response not ready: %s', exc)
+            await asyncio.sleep(2)
+            continue
+        if output_dir and isinstance(result, bytes):
+            with tracer.start_as_current_span('invoker.save_result') as span:
+                output = Path(output_dir) / f'{script_path.stem}.bin'
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(result)
+                span.set_attribute('file.path', str(output))
+                span.set_attribute('file.size', len(result))
+                logging.info('Saved result to %s', output)
+        return
+    raise RuntimeError('NDN script did not complete within 180 seconds')
 
 
 if __name__ == '__main__':
