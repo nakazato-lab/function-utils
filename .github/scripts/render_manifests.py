@@ -110,7 +110,7 @@ def render(scripts, mode):
                     for filename in files
                 ]])
             slug_source = function_name
-            version = 'function-yaml-v1'
+            version = 'registration-tracing-v1'
         else:
             if not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
                 raise ValueError(f'Unsupported script filename: {path.name}')
@@ -148,6 +148,8 @@ def render(scripts, mode):
                 {'name': 'FUNCTION_PREFERENCE_MEMORY', 'value': preference['memory']},
                 {'name': 'FUNCTION_PREFERENCE_BANDWIDTH', 'value': preference['bandwidth']},
                 {'name': 'MANAGER_REGISTER_NAME', 'value': '/Manager/register'},
+                {'name': 'OTEL_SERVICE_NAME', 'value': 'registerer'},
+                {'name': 'OTEL_EXPORTER_OTLP_ENDPOINT', 'value': 'http://jaeger.jaeger.svc.cluster.local:4318'},
             ])
         else:
             env.extend([
