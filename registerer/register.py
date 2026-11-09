@@ -43,16 +43,17 @@ def build_request():
         runtime = os.environ['FUNCTION_RUNTIME']
         if runtime not in ('ndn', 'python'):
             raise ValueError('FUNCTION_RUNTIME must be ndn or python')
-        code = os.environ['FUNCTION_CODE']
-        if not code.strip() or '\x00' in code:
-            raise ValueError('FUNCTION_CODE must be nonempty text without NUL characters')
         request['runtime'] = runtime
-        request['_code'] = code
         package_path = os.getenv('FUNCTION_PACKAGE_PATH')
         if package_path:
             # Store the ZIP file's bytes.
             request['zip_content'] = Path(package_path).read_bytes()
             request['source'] = os.environ['FUNCTION_SOURCE']
+        else:
+            code = os.environ['FUNCTION_CODE']
+            if not code.strip() or '\x00' in code:
+                raise ValueError('FUNCTION_CODE must be nonempty text without NUL characters')
+            request['_code'] = code
         try:
             requirements = json.loads(os.getenv('FUNCTION_REQUIREMENTS', '[]'))
         except json.JSONDecodeError as exc:
@@ -97,16 +98,17 @@ async def main():
         try:
             if operation == 'CREATE':
                 publisher = SegmentedNodeWrapper(app, serve=True)
-                with tracer.start_as_current_span('registerer.publish.code'):
-                    request['code_ref'] = await publisher.publish(
-                        f'{upload_prefix}/{function_name.lstrip("/")}',
-                        request.pop('_code').encode('utf-8'))
                 zip_content = request.pop('zip_content', None)
                 if zip_content is not None:
                     with tracer.start_as_current_span('registerer.publish.package'):
                         # request['zip_content'] now holds a reference to the published ZIP.
                         request['zip_content'] = await publisher.publish(
                             f'{upload_prefix}/{function_name.lstrip("/")}/package', zip_content)
+                else:
+                    with tracer.start_as_current_span('registerer.publish.code'):
+                        request['code_ref'] = await publisher.publish(
+                            f'{upload_prefix}/{function_name.lstrip("/")}',
+                            request.pop('_code').encode('utf-8'))
             with tracer.start_as_current_span('registerer.manager.request', kind=trace.SpanKind.CLIENT):
                 # Pass the current request span to Manager through ApplicationParameters.
                 TraceContextTextMapPropagator().inject(request)
