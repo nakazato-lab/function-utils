@@ -1,0 +1,3 @@
+let image = interest "/print_image"
+let resized = resize(image, 0.5, 1)
+return resized
