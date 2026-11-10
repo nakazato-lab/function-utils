@@ -1,0 +1,10 @@
+function:
+  name: resize
+  runtime: python
+  source: resize.py
+  requirements: resize.requirements.txt
+
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium
