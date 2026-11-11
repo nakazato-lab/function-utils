@@ -1,0 +1,2 @@
+let compressed = compress_image(interest "/print_image")
+return compressed
