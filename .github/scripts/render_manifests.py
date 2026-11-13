@@ -77,6 +77,14 @@ def load_function(path, source_dir):
     return name, runtime, source, requirements, preference, source_file, files
 
 
+def job_name(mode, slug_source, identity, template):
+    """Change the Job name whenever its immutable Pod template changes."""
+    content = json.dumps([identity, template], sort_keys=True, separators=(',', ':'))
+    digest = hashlib.sha256(content.encode()).hexdigest()[:12]
+    slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
+    return f'function-{mode}-{slug}-{digest}'
+
+
 def render(scripts, mode):
     folder, executable, wave = (
         ('yaml', 'register', '1') if mode == 'register'
@@ -110,7 +118,6 @@ def render(scripts, mode):
                     for filename in files
                 ]])
             slug_source = function_name
-            version = 'registration-tracing-v1'
         else:
             if not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
                 raise ValueError(f'Unsupported script filename: {path.name}')
@@ -120,11 +127,7 @@ def render(scripts, mode):
             relative = path.relative_to(scripts).as_posix()
             identity = relative + '\0' + code
             slug_source = path.stem
-            version = 'tracing-v1'
-        digest = hashlib.sha256((version + identity).encode()).hexdigest()[:12]
-        slug = re.sub('[^a-z0-9-]', '-', slug_source.lower()).strip('-')[:25] or 'script'
-        name = f'function-{mode}-{slug}-{digest}'
-        metadata = {'name': name, 'namespace': 'ndn'}
+        metadata = {'namespace': 'ndn'}
         env = [
             {'name': 'NFD_CONFIG_PATH', 'value': '/etc/ndn-config/ADDRESS'},
             {'name': 'NFD_NAME_PATH', 'value': '/etc/ndn-config/ROUTER_NAME'},
@@ -210,7 +213,7 @@ def render(scripts, mode):
                 ).replace('$', '$$')],
                 'volumeMounts': [{'name': 'script', 'mountPath': '/app/package'}],
             })
-        items.append({'apiVersion': 'batch/v1', 'kind': 'Job',
+        job = {'apiVersion': 'batch/v1', 'kind': 'Job',
                       'metadata': {**metadata, 'annotations': {'argocd.argoproj.io/sync-wave': wave}},
                       'spec': {'backoffLimit': 2, 'activeDeadlineSeconds': 180 if mode == 'register' else 300,
                                'template': {'metadata': {'labels': {'app': f'function-{mode}'}},
@@ -225,7 +228,9 @@ def render(scripts, mode):
                                                      }],
                                                      'initContainers': init_containers,
                                                      'containers': [container],
-                                                     'volumes': volumes}}}})
+                                                     'volumes': volumes}}}}
+        job['metadata']['name'] = job_name(mode, slug_source, identity, job['spec']['template'])
+        items.append(job)
     if mode == 'invoke' and any('image' in path.name for path in paths):
         items.insert(0, {
             'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
