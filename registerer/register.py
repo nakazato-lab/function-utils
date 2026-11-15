@@ -86,6 +86,7 @@ class Registerer:
                               os.getenv('MANAGER_REGISTER_NAME', '/Manager/register'))
         self.app = None
         self.wait_until_function_result = asyncio.Event()
+        self.result_ref = None
 
     @tracer.start_as_current_span('registerer.run')
     async def run(self):
@@ -102,16 +103,21 @@ class Registerer:
         if not app_param:
             return
         try:
-            result = json.loads(bytes(app_param))
-            if (not isinstance(result, dict)
-                    or result.get('name') != Name.to_str(Name.normalize('/' + self.function_name.strip('/')))
-                    or result.get('phase') != 'Running'):
-                return
-        except (ValueError, UnicodeDecodeError):
-            logging.warning('Invalid placement result: %s', Name.to_str(name))
+            notification = json.loads(bytes(app_param))
+            result_ref = notification['result_ref']
+        except (ValueError, UnicodeDecodeError, KeyError, TypeError):
+            logging.warning('Invalid placement result notification: %s', Name.to_str(name))
             return
-        logging.info('Function placement result: %s', json.dumps(result, ensure_ascii=False))
+        self.result_ref = result_ref
         self.wait_until_function_result.set()
+
+    async def fetch_function_result(self, result_ref):
+        content = await SegmentedNodeWrapper(self.app).fetch(result_ref, must_be_fresh=True)
+        result = json.loads(content)
+        if (not isinstance(result, dict)
+                or result.get('name') != Name.to_str(Name.normalize('/' + self.function_name.strip('/')))):
+            raise RuntimeError(f'Placement result does not match function {self.function_name}: {result_ref}')
+        logging.info('Function placement result: %s', json.dumps(result, ensure_ascii=False))
 
     async def register(self):
         deadline = asyncio.get_running_loop().time() + FUNCTION_REGISTRATION_TIMEOUT
@@ -119,7 +125,7 @@ class Registerer:
             if self.operation == 'CREATE':
                 await self.publish_function()
                 await self.request_registration(deadline)
-                await self.wait_until_running(deadline)
+                await self.wait_for_placement_result(deadline)
             else:
                 await self.request_registration(deadline)
         finally:
@@ -166,13 +172,16 @@ class Registerer:
         if not response.startswith('Success:'):
             raise RuntimeError(f'Manager rejected {self.operation}: {response}')
 
-    async def wait_until_running(self, deadline):
-        logging.info('Waiting for Seed to report Function Pod Running: %s', self.function_name)
+    async def wait_for_placement_result(self, deadline):
+        logging.info('Waiting for Seed to report Function placement result: %s', self.function_name)
         try:
             await asyncio.wait_for(
                 self.wait_until_function_result.wait(), timeout=max(0, deadline - asyncio.get_running_loop().time()))
+            await asyncio.wait_for(
+                self.fetch_function_result(self.result_ref),
+                timeout=max(0, deadline - asyncio.get_running_loop().time()))
         except asyncio.TimeoutError as exc:
-            raise RuntimeError('Timed out waiting for Function Pod Running notification from Seed') from exc
+            raise RuntimeError('Timed out waiting for Function placement result from Seed') from exc
 
 
 async def main():
