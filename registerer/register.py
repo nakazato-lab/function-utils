@@ -167,8 +167,6 @@ class Registerer:
         except InterestTimeout as exc:
             raise RuntimeError('Timeout waiting for Manager response') from exc
         response = bytes(content or b'').decode('utf-8')
-        logging.info('Manager response: %s', response)
-        print(response, flush=True)
         if not response.startswith('Success:'):
             raise RuntimeError(f'Manager rejected {self.operation}: {response}')
 
