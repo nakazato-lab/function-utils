@@ -97,10 +97,6 @@ def render(scripts, mode):
             raise ValueError('Registration definitions must be YAML files')
         paths = sorted(p for p in (scripts / folder).rglob('*')
                        if p.is_file() and p.suffix in ('.yaml', '.yml'))
-        if paths:
-            source_commit = subprocess.check_output(
-                ['git', '-C', str(scripts), 'rev-parse', 'HEAD'],
-                text=True).strip()
     else:
         paths = sorted((scripts / folder).rglob('*.ndn'))
     names = set()
@@ -113,6 +109,14 @@ def render(scripts, mode):
             names.add(function_name)
             identity = json.dumps([function_name, runtime, code, requirements, preference], sort_keys=True)
             if files:
+                source_paths = [f'func/{source_file}']
+                for filename in files:
+                    source_paths.append(f'func/{filename}')
+                source_commit = subprocess.check_output(
+                    ['git', '-C', str(scripts), 'log', '-1', '--format=%H', '--', *source_paths],
+                    text=True).strip()
+                if not source_commit:
+                    raise ValueError(f'{path}: no commit found for function package files')
                 identity += json.dumps([source_file, [
                     [filename, hashlib.sha256((scripts / 'func' / filename).read_bytes()).hexdigest()]
                     for filename in files
