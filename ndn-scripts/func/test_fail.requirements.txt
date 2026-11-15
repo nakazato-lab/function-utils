@@ -1,0 +1,2 @@
+# Intentionally invalid to fail dependency installation during Pod startup.
+numpy==invalid-version

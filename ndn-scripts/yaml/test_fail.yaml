@@ -1,0 +1,10 @@
+function:
+  name: test-fail
+  runtime: python
+  source: test_fail.py
+  requirements: test_fail.requirements.txt
+
+preference:
+  cpu: medium
+  memory: medium
+  bandwidth: medium
