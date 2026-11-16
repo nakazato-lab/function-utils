@@ -117,7 +117,12 @@ class Registerer:
         if (not isinstance(result, dict)
                 or result.get('name') != Name.to_str(Name.normalize('/' + self.function_name.strip('/')))):
             raise RuntimeError(f'Placement result does not match function {self.function_name}: {result_ref}')
-        logging.info('Function placement result: %s', json.dumps(result, ensure_ascii=False))
+        logs = result.get('logs')
+        if logs:
+            for error_log in logs.values():
+                logging.error('%s', error_log)
+        else:
+            logging.info('Function placement result: %s', json.dumps(result, ensure_ascii=False))
 
     async def register(self):
         deadline = asyncio.get_running_loop().time() + FUNCTION_REGISTRATION_TIMEOUT
