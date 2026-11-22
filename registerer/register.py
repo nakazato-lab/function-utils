@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from ndn.encoding import Name
@@ -10,7 +11,7 @@ from ndn.security import KeychainDigest
 from ndn.transport.stream_face import TcpFace
 from ndn.types import InterestNack, InterestTimeout
 from segmented_node_wrapper import SegmentedNodeWrapper
-from opentelemetry import trace
+from opentelemetry import context, trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from utils.nfd import wait_for_nfd
@@ -87,9 +88,11 @@ class Registerer:
         self.app = None
         self.wait_until_function_result = asyncio.Event()
         self.result_ref = None
+        self.registration_context = None
+        self.result_context = None
 
-    @tracer.start_as_current_span('registerer.run')
     async def run(self):
+        self.registration_context = context.get_current()
         span = trace.get_current_span()
         span.set_attribute('ndn.function.name', self.function_name)
         if span.is_recording():
@@ -102,27 +105,46 @@ class Registerer:
     def on_function_placement_result(self, name, _param, app_param):
         if not app_param:
             return
+        received_at = time.time_ns()
         try:
             notification = json.loads(bytes(app_param))
             result_ref = notification['result_ref']
-        except (ValueError, UnicodeDecodeError, KeyError, TypeError):
+            parent = TraceContextTextMapPropagator().extract(notification, context=self.registration_context)
+        except (ValueError, UnicodeDecodeError, KeyError, TypeError) as exc:
+            with tracer.start_as_current_span(
+                    'registerer.receive.result', context=self.registration_context,
+                    kind=trace.SpanKind.SERVER, start_time=received_at) as span:
+                span.record_exception(exc)
+                span.set_status(trace.StatusCode.ERROR, str(exc))
             logging.warning('Invalid placement result notification: %s', Name.to_str(name))
             return
-        self.result_ref = result_ref
-        self.wait_until_function_result.set()
+        with tracer.start_as_current_span(
+                'registerer.receive.result', context=parent, kind=trace.SpanKind.SERVER,
+                start_time=received_at, attributes={'ndn.name': Name.to_str(name)}):
+            self.result_context = context.get_current()
+            self.result_ref = result_ref
+            self.wait_until_function_result.set()
 
     async def fetch_function_result(self, result_ref):
-        content = await SegmentedNodeWrapper(self.app).fetch(result_ref, must_be_fresh=True)
-        result = json.loads(content)
-        if (not isinstance(result, dict)
-                or result.get('name') != Name.to_str(Name.normalize('/' + self.function_name.strip('/')))):
-            raise RuntimeError(f'Placement result does not match function {self.function_name}: {result_ref}')
-        logs = result.get('logs')
-        if logs:
-            for error_log in logs.values():
-                logging.error('%s', error_log)
-        else:
-            logging.info('Function placement result: %s', json.dumps(result, ensure_ascii=False))
+        with tracer.start_as_current_span(
+                'registerer.fetch.result', context=self.result_context, kind=trace.SpanKind.CLIENT,
+                attributes={'ndn.name': result_ref}) as span:
+            content = await SegmentedNodeWrapper(self.app).fetch(result_ref, must_be_fresh=True)
+            result = json.loads(content)
+            if (not isinstance(result, dict)
+                    or result.get('name') != Name.to_str(Name.normalize('/' + self.function_name.strip('/')))):
+                raise RuntimeError(f'Placement result does not match function {self.function_name}: {result_ref}')
+            span.set_attribute('k8s.pod.phase', result.get('phase', 'Unknown'))
+            if result.get('phase') != 'Running' or result.get('logs') or result.get('log_errors'):
+                reason = result.get('reason') or 'Function startup failed'
+                span.set_status(trace.StatusCode.ERROR, reason)
+                trace.get_current_span(self.registration_context).set_status(trace.StatusCode.ERROR, reason)
+            logs = result.get('logs')
+            if logs:
+                for error_log in logs.values():
+                    logging.error('%s', error_log)
+            else:
+                logging.info('Function placement result: %s', json.dumps(result, ensure_ascii=False))
 
     async def register(self):
         deadline = asyncio.get_running_loop().time() + FUNCTION_REGISTRATION_TIMEOUT
@@ -136,6 +158,7 @@ class Registerer:
         finally:
             self.app.shutdown()
 
+    @tracer.start_as_current_span('registerer.publish')
     async def publish_function(self):
         upload_prefix = f'/{get_router_prefix()}{FUNCTION_UPLOAD_PREFIX}'
         function_prefix = f'{upload_prefix}/{self.function_name.strip("/")}'
@@ -178,8 +201,9 @@ class Registerer:
     async def wait_for_placement_result(self, deadline):
         logging.info('Waiting for Seed to report Function placement result: %s', self.function_name)
         try:
-            await asyncio.wait_for(
-                self.wait_until_function_result.wait(), timeout=max(0, deadline - asyncio.get_running_loop().time()))
+            with tracer.start_as_current_span('registerer.wait.result'):
+                await asyncio.wait_for(
+                    self.wait_until_function_result.wait(), timeout=max(0, deadline - asyncio.get_running_loop().time()))
             await asyncio.wait_for(
                 self.fetch_function_result(self.result_ref),
                 timeout=max(0, deadline - asyncio.get_running_loop().time()))
@@ -187,8 +211,10 @@ class Registerer:
             raise RuntimeError('Timed out waiting for Function placement result from Seed') from exc
 
 
+@tracer.start_as_current_span('registerer.run')
 async def main():
-    operation, request = build_request()
+    with tracer.start_as_current_span('registerer.prepare'):
+        operation, request = build_request()
     await Registerer(operation, request).run()
 
 
