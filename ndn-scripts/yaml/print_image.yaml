@@ -3,7 +3,7 @@ function:
   runtime: ndn
   source: print_image.ndn
   files:
-    - sample-64k.png
+    - sample-256k.png
 
 preference:
   cpu: medium
