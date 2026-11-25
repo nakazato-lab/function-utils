@@ -68,12 +68,30 @@ def build_request():
         if runtime != 'python' and requirements:
             raise ValueError('FUNCTION_REQUIREMENTS is supported only for python functions')
         request['requirements'] = requirements
-        preference = {key: os.getenv(f'FUNCTION_PREFERENCE_{key.upper()}', 'medium')
-                      for key in ('cpu', 'memory', 'bandwidth')}
-        for key, value in preference.items():
-            if value not in ('high', 'medium', 'low'):
-                raise ValueError(f'FUNCTION_PREFERENCE_{key.upper()} must be high, medium, or low')
-        request['preference'] = preference
+
+        # 要求リソース指定:
+        # 1. FUNCTION_DEMAND_* (絶対値: CPUコア数, メモリBytes, 帯域bps) が指定されている場合
+        # 2. 指定されていない場合は従来の FUNCTION_PREFERENCE_* (high/medium/low) を使用
+        demand = {}
+        for key in ('cpu', 'memory', 'bandwidth'):
+            env_val = os.getenv(f'FUNCTION_DEMAND_{key.upper()}')
+            if env_val is not None and env_val.strip():
+                try:
+                    demand[key] = float(env_val.strip())
+                except ValueError as exc:
+                    raise ValueError(f'FUNCTION_DEMAND_{key.upper()} must be a valid number') from exc
+        if demand:
+            request['demand'] = demand
+
+        # preference が明示的に指定されている場合、または demand が指定されていない場合は preference を設定
+        preference_specified = any(os.getenv(f'FUNCTION_PREFERENCE_{k.upper()}') for k in ('cpu', 'memory', 'bandwidth'))
+        if preference_specified or not demand:
+            preference = {key: os.getenv(f'FUNCTION_PREFERENCE_{key.upper()}', 'medium')
+                          for key in ('cpu', 'memory', 'bandwidth')}
+            for key, value in preference.items():
+                if value not in ('high', 'medium', 'low'):
+                    raise ValueError(f'FUNCTION_PREFERENCE_{key.upper()} must be high, medium, or low')
+            request['preference'] = preference
     return operation, request
 
 
