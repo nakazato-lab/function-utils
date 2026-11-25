@@ -1,12 +1,10 @@
 import io
-import sys
 
 from PIL import Image
 
 
-content = sys.stdin.buffer.read()
-output = io.BytesIO()
-with Image.open(io.BytesIO(content)) as image:
-    image.save(output, format='PNG', optimize=True)
-sys.stdout.buffer.write(output.getvalue())
-sys.stdout.buffer.flush()
+def execute(input_bytes, args):
+    output = io.BytesIO()
+    with Image.open(io.BytesIO(input_bytes)) as image:
+        image.save(output, format='PNG', optimize=True)
+    return output.getvalue()
