@@ -1,3 +1,2 @@
 let compressed = compress_image(interest "/print_image")
-let compressed_again = compress_image(interest "/print_image")
-return compressed_again
+return compressed

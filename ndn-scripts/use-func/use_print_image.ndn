@@ -1,3 +1,2 @@
 let image = interest "/print_image"
-let image_again = interest "/print_image"
-return image_again
+return image
