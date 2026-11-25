@@ -153,14 +153,24 @@ class Registerer:
                     or result.get('name') != Name.to_str(Name.normalize('/' + self.function_name.strip('/')))):
                 raise RuntimeError(f'Placement result does not match function {self.function_name}: {result_ref}')
             span.set_attribute('k8s.pod.phase', result.get('phase', 'Unknown'))
-            if result.get('phase') != 'Running' or result.get('logs') or result.get('log_errors'):
+            is_failed = bool(
+                result.get('phase') != 'Running'
+                or result.get('logs')
+                or result.get('log_errors')
+                or result.get('startup_errors')
+            )
+            if is_failed:
                 reason = result.get('reason') or 'Function startup failed'
                 span.set_status(trace.StatusCode.ERROR, reason)
                 trace.get_current_span(self.registration_context).set_status(trace.StatusCode.ERROR, reason)
             logs = result.get('logs')
             if logs:
-                for error_log in logs.values():
-                    logging.error('%s', error_log)
+                for container, error_log in logs.items():
+                    logging.error('Container %s error log:\n%s', container, error_log)
+            if is_failed:
+                if result.get('startup_errors') or result.get('events') or not logs:
+                    summary = {key: value for key, value in result.items() if key != 'logs'}
+                    logging.error('Function placement failed: %s', json.dumps(summary, ensure_ascii=False))
             else:
                 logging.info('Function placement result: %s', json.dumps(result, ensure_ascii=False))
 
